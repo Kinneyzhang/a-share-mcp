@@ -14,7 +14,7 @@ from typing import Any, Callable
 from . import data
 
 SERVER_NAME = "a-share-mcp"
-SERVER_VERSION = "0.6.0"
+SERVER_VERSION = "0.7.0"
 
 
 def _tool_schema() -> list[dict[str, Any]]:
@@ -251,6 +251,11 @@ def _tool_schema() -> list[dict[str, Any]]:
             "inputSchema": {"type": "object", "properties": {"symbol": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20}}, "required": ["symbol"], "additionalProperties": False},
         },
         {
+            "name": "get_announcement_layout",
+            "description": "Extract best-effort page layout blocks/lines from a CNINFO announcement PDF using OCR or embedded text.",
+            "inputSchema": {"type": "object", "properties": {"detail_url": {"type": "string"}, "symbol": {"type": "string"}, "announcement_id": {"type": "string"}, "org_id": {"type": "string"}, "announcement_time": {"type": "string"}, "method": {"type": "string", "enum": ["ocr", "embedded"], "default": "ocr"}, "max_pages": {"type": "integer", "minimum": 1, "maximum": 20, "default": 3}}, "additionalProperties": False},
+        },
+        {
             "name": "search_research_reports",
             "description": "Search public broker research reports from Eastmoney for background reading.",
             "inputSchema": {
@@ -291,6 +296,7 @@ def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
         "get_shareholder_change_events": data.get_shareholder_change_events,
         "get_financing_events": data.get_financing_events,
         "get_restricted_release_events": data.get_restricted_release_events,
+        "get_announcement_layout": data.get_announcement_layout,
         "search_research_reports": data.search_research_reports,
     }
     if name not in tools:

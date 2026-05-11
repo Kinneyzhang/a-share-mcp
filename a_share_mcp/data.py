@@ -1461,6 +1461,84 @@ def get_financial_events_pack(symbol: str, limit: int = 10) -> dict[str, Any]:
     }
     return {"ok": any(s.get("ok") is True for s in sections.values()), "partial": any(s.get("ok") is False for s in sections.values()), "symbol": code, "source_ledger": _source_ledger(sections), "events": sections, "warnings": ["For research and education only; not investment advice.", "Event records are source-dependent; verify material events against official filings."]}
 
+
+def _download_announcement_pdf(detail_url: str | None = None, symbol: str | None = None, announcement_id: str | None = None, org_id: str | None = None, announcement_time: str | None = None) -> tuple[str, dict[str, Any], bytes]:
+    parsed: dict[str, Any] = {}
+    if detail_url:
+        parsed = parse_announcement_detail_url(detail_url)
+    code = normalize_symbol(symbol or parsed.get("symbol") or "")
+    aid = clean_text(announcement_id or parsed.get("announcement_id"), max_len=40)
+    oid = clean_text(org_id or parsed.get("org_id"), max_len=40) or None
+    atime = _to_cninfo_datetime(announcement_time or parsed.get("announcement_time"))
+    if not aid:
+        raise ValueError("announcement_id or detail_url is required")
+    announcement = normalize_announcement_record({"secCode": code, "orgId": oid, "announcementId": aid, "announcementTime": atime, "公告链接": detail_url})
+    pdf_url = announcement.get("pdf_url")
+    if not pdf_url:
+        raise RuntimeError("announcement PDF URL is unavailable")
+    r = requests.get(str(pdf_url), headers=EASTMONEY_HEADERS, timeout=30)
+    r.raise_for_status()
+    return code, announcement, r.content
+
+
+def _ocr_layout_from_pdf(pdf_bytes: bytes, max_pages: int) -> tuple[list[dict[str, Any]], str | None]:
+    try:
+        from rapidocr_onnxruntime import RapidOCR  # type: ignore
+    except Exception as exc:
+        return [], f"rapidocr_onnxruntime unavailable: {type(exc).__name__}: {str(exc)[:120]}"
+    images = _render_pdf_pages(pdf_bytes, max_pages=max_pages)
+    engine = RapidOCR()
+    pages: list[dict[str, Any]] = []
+    for idx, image in enumerate(images, 1):
+        result, _ = engine(image)
+        lines = []
+        for item in result or []:
+            if isinstance(item, (list, tuple)) and len(item) >= 2:
+                box = item[0]
+                text = clean_text(item[1], max_len=2000)
+                score = _safe_float(item[2]) if len(item) >= 3 else None
+                if text:
+                    lines.append({"text": text, "box": box, "score": score})
+        pages.append({"page": idx, "line_count": len(lines), "lines": lines})
+    return pages, None
+
+
+def _embedded_layout_from_pdf(pdf_bytes: bytes, max_pages: int) -> tuple[list[dict[str, Any]], str | None]:
+    try:
+        import fitz
+    except Exception as exc:
+        return [], f"PyMuPDF unavailable: {type(exc).__name__}: {str(exc)[:120]}"
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    pages=[]
+    for page_index in range(min(max_pages, len(doc))):
+        page = doc[page_index]
+        blocks=[]
+        for block in page.get_text("blocks"):
+            if len(block) >= 5:
+                text = _sanitize_extracted_text(str(block[4]), max_chars=4000)
+                if text:
+                    blocks.append({"bbox": [round(float(x), 2) for x in block[:4]], "text": text})
+        pages.append({"page": page_index+1, "block_count": len(blocks), "blocks": blocks})
+    return pages, None
+
+
+@cached(ttl_seconds=6 * 3600)
+def get_announcement_layout(detail_url: str | None = None, symbol: str | None = None, announcement_id: str | None = None, org_id: str | None = None, announcement_time: str | None = None, method: str = "ocr", max_pages: int = 3) -> dict[str, Any]:
+    method = clean_text(method, max_len=16).lower() or "ocr"
+    if method not in {"ocr", "embedded"}:
+        method = "ocr"
+    max_pages = clamp_int(max_pages, default=3, minimum=1, maximum=20)
+    code, announcement, pdf_bytes = _download_announcement_pdf(detail_url, symbol, announcement_id, org_id, announcement_time)
+    if method == "embedded":
+        pages, error = _embedded_layout_from_pdf(pdf_bytes, max_pages=max_pages)
+        engine = "pymupdf"
+    else:
+        pages, error = _ocr_layout_from_pdf(pdf_bytes, max_pages=max_pages)
+        engine = "rapidocr-onnxruntime"
+    text = "\n".join(line.get("text", "") for page in pages for line in page.get("lines", [])) if method == "ocr" else "\n".join(block.get("text", "") for page in pages for block in page.get("blocks", []))
+    metrics = assess_text_quality(text)
+    return {"ok": error is None, "symbol": code, "source": "cninfo/pdf-layout", "announcement": announcement, "method": method, "engine": engine, "pages_processed": len(pages), "pages": pages, "text_quality_metrics": metrics, "error": error, "warnings": ["For research and education only; not investment advice.", "Layout extraction is best-effort; use pdf_url as canonical source."]}
+
 def data_healthcheck() -> dict[str, Any]:
     result: dict[str, Any] = {
         "ok": True,

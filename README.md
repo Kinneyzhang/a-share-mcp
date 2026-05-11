@@ -40,6 +40,7 @@ There are already broad financial-data MCP servers. This project intentionally s
 - `get_sector_components` — Component stocks for an industry/concept board.
 - `get_financial_events_pack` — Dividend, repurchase, shareholder-change, financing, and restricted-release event pack.
 - `get_dividend_events` / `get_repurchase_events` / `get_shareholder_change_events` / `get_financing_events` / `get_restricted_release_events` — Event-specific tools.
+- `get_announcement_layout` — Best-effort PDF page layout extraction with OCR lines or embedded text blocks.
 
 ## Install
 
