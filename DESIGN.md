@@ -2,17 +2,16 @@
 
 ## Vision
 
-Expose reliable, source-labeled A-share data tools as a local stdio MCP server, so agents can build A-share research workflows without hard-coding finance data scraping into each app.
+Expose reliable, source-labeled A-share data tools as a local stdio MCP server, so agents can access A-share data without hard-coding finance data scraping into each app.
 
 ## Product positioning
 
-A Share MCP is not trying to be the largest financial data MCP. It is a lightweight, no-token-required research data layer for Chinese A-share workflows:
+A Share MCP is not trying to be the largest financial data MCP. It is a lightweight, no-token-required data layer for Chinese A-share tools:
 
 ```text
-Agent question / research draft
+MCP client
 → source-labeled A-share data tools
-→ report writing / learning explanation
-→ optional fact audit / human review
+→ structured JSON results
 ```
 
 ## Non-goals
@@ -68,6 +67,5 @@ small JSON cache + AkShare + Eastmoney public APIs + CNINFO through AkShare
 - Index / sector component data.
 - Convertible bonds / funds.
 - Announcement PDF download and text extraction.
-- Source-pack export for deterministic fact audit.
-- AIIterate job adapter.
-- LLM Wiki company/entity distillation.
+- Export formats for downstream tools.
+- Optional integration examples kept outside the core MCP server.

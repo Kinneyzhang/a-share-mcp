@@ -4,7 +4,7 @@
 
 Source-labeled, agent-friendly Chinese A-share data tools exposed as a local stdio MCP server.
 
-A Share MCP is designed for research workflows rather than trading automation. It helps AI agents retrieve A-share quotes, price history, financial indicators, business composition, announcements, and compact company research packs with explicit data-source metadata.
+A Share MCP is designed for data retrieval and structured research inputs rather than trading automation. It helps AI agents retrieve A-share quotes, price history, financial indicators, business composition, announcements, and compact company data packs with explicit data-source metadata.
 
 > For research and education only. This project does not provide investment advice, trading signals, brokerage integration, or buy/sell recommendations.
 
