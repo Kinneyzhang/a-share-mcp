@@ -61,9 +61,11 @@ Expected tools:
 }
 {
   "tool": "get_announcement_detail",
-  "arguments": {"detail_url": "<detail_url from search_announcements>", "include_text": false}
+  "arguments": {"detail_url": "<detail_url from search_announcements>", "include_text": true, "max_chars": 4000}
 }
 ```
+
+If `text_status` is `poor_quality`, ignore the preview text and use the returned `pdf_url` as the canonical filing.
 
 ## Financial summary
 

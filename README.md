@@ -29,7 +29,7 @@ There are already broad financial-data MCP servers. This project intentionally s
 - `get_financial_summary` — Compact core financial metrics for agents.
 - `get_business_composition` — Business / revenue composition table.
 - `search_announcements` — CNINFO / Eastmoney announcement search with normalized IDs, detail URLs, and PDF URLs.
-- `get_announcement_detail` — Normalize a CNINFO announcement detail link and optionally extract a bounded PDF text preview.
+- `get_announcement_detail` — Normalize a CNINFO announcement detail link and optionally extract a bounded PDF text preview with quality metrics.
 - `search_research_reports` — Public broker research search for background reading.
 - `get_company_snapshot` — One-call research pack: quote, profile, price stats, financial summary, business composition, and recent announcements.
 - `get_research_pack` — Structured company data pack with price records, financials, business composition, announcements, optional broker research, and a source ledger.
@@ -177,7 +177,7 @@ Tool responses include a `cache` object when served through the cache wrapper.
 - Public endpoints can change, throttle, or return delayed data.
 - Quote data can be unavailable outside market windows; a zero intraday value should not be treated as a real zero price.
 - Financial indicator fields are source-defined; always verify report period and accounting scope.
-- Broker research can be biased and should only be used as background material.
+- Announcement text extraction is best-effort. When `text_status` is `poor_quality`, treat `text` as unreliable and use `pdf_url` as the canonical source.
 - This server does not execute trades, connect to broker accounts, or produce investment recommendations.
 
 ## License

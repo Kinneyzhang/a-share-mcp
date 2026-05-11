@@ -14,7 +14,7 @@ from typing import Any, Callable
 from . import data
 
 SERVER_NAME = "a-share-mcp"
-SERVER_VERSION = "0.3.0"
+SERVER_VERSION = "0.3.1"
 
 
 def _tool_schema() -> list[dict[str, Any]]:

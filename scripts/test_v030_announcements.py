@@ -56,6 +56,27 @@ def test_get_announcement_detail_from_url_without_text() -> None:
     assert detail["announcement"]["pdf_url"] == "http://static.cninfo.com.cn/finalpage/2026-05-07/1225278835.PDF"
     assert detail["text"] is None
     assert detail["text_status"] == "skipped"
+    assert detail["text_quality"] == "not_requested"
+    assert detail["text_quality_metrics"] is None
+
+
+def test_text_quality_good_for_normal_chinese_text() -> None:
+    text = "贵州茅台股份有限公司 2025 年年度报告。本公告内容真实、准确、完整。营业收入和净利润保持稳定。"
+
+    metrics = data.assess_text_quality(text)
+
+    assert metrics["quality"] == "good"
+    assert metrics["cjk_ratio"] > 0.4
+    assert metrics["garbled_score"] < 0.35
+
+
+def test_text_quality_poor_for_garbled_pdf_text() -> None:
+    text = "FF301\n∉ ⊈ಊṉọᄅḸі ٺ୍ ᄅ ರ ⊯Ⅲ ࢌ\nඳ଀Ẁ ඳ ರ௹ ୍ ᄅ ರ\nЧṉọ\n ٳٺܢܢ⦁ )෮ഈ൧ 䩏"
+
+    metrics = data.assess_text_quality(text)
+
+    assert metrics["quality"] == "poor"
+    assert metrics["garbled_score"] >= 0.35
 
 
 def main() -> int:
@@ -63,6 +84,8 @@ def main() -> int:
         test_normalize_cninfo_announcement_record,
         test_parse_announcement_detail_url,
         test_get_announcement_detail_from_url_without_text,
+        test_text_quality_good_for_normal_chinese_text,
+        test_text_quality_poor_for_garbled_pdf_text,
     ]
     for test in tests:
         test()

@@ -45,7 +45,7 @@ def _env_int(name: str, default: int) -> int:
 
 DEFAULT_CACHE_DIR = Path(os.getenv("A_SHARE_MCP_CACHE_DIR", Path.home() / ".cache" / "a-share-mcp"))
 DEFAULT_CACHE_TTL_SECONDS = _env_int("A_SHARE_MCP_CACHE_TTL_SECONDS", 300)
-CACHE_SCHEMA_VERSION = "3"
+CACHE_SCHEMA_VERSION = "4"
 
 
 def _today_yyyymmdd() -> str:
@@ -636,13 +636,74 @@ def _sanitize_extracted_text(text: str, max_chars: int) -> str:
     return text.strip()[:max_chars]
 
 
-def _extract_pdf_text(pdf_bytes: bytes, max_chars: int) -> tuple[str | None, str, str | None]:
+def assess_text_quality(text: str | None) -> dict[str, Any]:
+    """Score extracted PDF text so garbled previews are not treated as reliable."""
+    text = text or ""
+    total = len(text)
+    if total == 0:
+        return {
+            "quality": "empty",
+            "length": 0,
+            "printable_ratio": 0.0,
+            "cjk_ratio": 0.0,
+            "latin_digit_ratio": 0.0,
+            "control_char_ratio": 0.0,
+            "unknown_script_ratio": 0.0,
+            "garbled_score": 1.0,
+        }
+
+    printable = 0
+    cjk = 0
+    latin_digit = 0
+    control = 0
+    whitespace_punct = 0
+    unknown_script = 0
+    for ch in text:
+        code = ord(ch)
+        if ch.isprintable() or ch in "\n\r\t":
+            printable += 1
+        if ch.isspace() or ch in "，。！？；：、,.!?;:()（）[]【】《》<>/\\-—_+*=%'\"“”‘’&%$#@|":
+            whitespace_punct += 1
+        elif "\u4e00" <= ch <= "\u9fff" or "\u3400" <= ch <= "\u4dbf":
+            cjk += 1
+        elif ch.isascii() and ch.isalnum():
+            latin_digit += 1
+        elif code < 32 or code == 127:
+            control += 1
+        else:
+            unknown_script += 1
+
+    content_chars = max(1, total - whitespace_punct)
+    printable_ratio = printable / total
+    cjk_ratio = cjk / content_chars
+    latin_digit_ratio = latin_digit / content_chars
+    control_char_ratio = control / total
+    unknown_script_ratio = unknown_script / content_chars
+    garbled_score = min(1.0, max(0.0, unknown_script_ratio * 1.35 + control_char_ratio * 2.0 + (1 - printable_ratio)))
+    quality = "good"
+    if total < 20:
+        quality = "empty"
+    elif garbled_score >= 0.35 or unknown_script_ratio >= 0.25 or printable_ratio < 0.9:
+        quality = "poor"
+    return {
+        "quality": quality,
+        "length": total,
+        "printable_ratio": round(printable_ratio, 4),
+        "cjk_ratio": round(cjk_ratio, 4),
+        "latin_digit_ratio": round(latin_digit_ratio, 4),
+        "control_char_ratio": round(control_char_ratio, 4),
+        "unknown_script_ratio": round(unknown_script_ratio, 4),
+        "garbled_score": round(garbled_score, 4),
+    }
+
+
+def _extract_pdf_text(pdf_bytes: bytes, max_chars: int) -> tuple[str | None, str, str | None, dict[str, Any] | None]:
     if not pdf_bytes.startswith(b"%PDF"):
-        return None, "error", "downloaded file is not a PDF"
+        return None, "error", "downloaded file is not a PDF", None
     try:
         from pypdf import PdfReader  # type: ignore
     except Exception as exc:
-        return None, "unavailable", f"pypdf unavailable: {type(exc).__name__}: {str(exc)[:120]}"
+        return None, "unavailable", f"pypdf unavailable: {type(exc).__name__}: {str(exc)[:120]}", None
     try:
         reader = PdfReader(io.BytesIO(pdf_bytes))
         chunks = []
@@ -653,9 +714,12 @@ def _extract_pdf_text(pdf_bytes: bytes, max_chars: int) -> tuple[str | None, str
             if sum(len(c) for c in chunks) >= max_chars:
                 break
         text = _sanitize_extracted_text("\n".join(chunks), max_chars=max_chars)
-        return text if text else "", "ok", None
+        metrics = assess_text_quality(text)
+        status = "ok" if metrics["quality"] == "good" else "poor_quality" if metrics["quality"] == "poor" else "empty"
+        error = "extracted text appears garbled; use pdf_url as canonical source" if status == "poor_quality" else None
+        return text if text else "", status, error, metrics
     except Exception as exc:
-        return None, "error", f"PDF text extraction failed: {type(exc).__name__}: {str(exc)[:160]}"
+        return None, "error", f"PDF text extraction failed: {type(exc).__name__}: {str(exc)[:160]}", None
 
 
 @cached(ttl_seconds=6 * 3600)
@@ -681,13 +745,16 @@ def get_announcement_detail(symbol: str | None = None, announcement_id: str | No
     })
     text = None
     text_status = "skipped"
+    text_quality = "not_requested"
+    text_quality_metrics = None
     text_error = None
     content_length = None
     if include_text and announcement.get("pdf_url"):
         r = requests.get(str(announcement["pdf_url"]), headers=EASTMONEY_HEADERS, timeout=30)
         r.raise_for_status()
         content_length = len(r.content)
-        text, text_status, text_error = _extract_pdf_text(r.content, max_chars=max_chars)
+        text, text_status, text_error, text_quality_metrics = _extract_pdf_text(r.content, max_chars=max_chars)
+        text_quality = text_quality_metrics.get("quality") if text_quality_metrics else "unavailable"
     return {
         "ok": True,
         "symbol": code,
@@ -695,6 +762,8 @@ def get_announcement_detail(symbol: str | None = None, announcement_id: str | No
         "announcement": announcement,
         "text": text,
         "text_status": text_status,
+        "text_quality": text_quality,
+        "text_quality_metrics": text_quality_metrics,
         "text_error": text_error,
         "content_length": content_length,
         "warnings": [

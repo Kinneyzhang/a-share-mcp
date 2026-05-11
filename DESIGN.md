@@ -55,7 +55,7 @@ small JSON cache + AkShare + Eastmoney public APIs + CNINFO public search/PDF en
 - Financial summary.
 - Business composition.
 - Announcement search.
-- Normalized announcement detail metadata, canonical PDF URLs, and bounded best-effort PDF text extraction.
+- Normalized announcement detail metadata, canonical PDF URLs, bounded best-effort PDF text extraction, and quality metrics that flag garbled text.
 - Research report search.
 - One-call company snapshot.
 - Structured research/data pack with source ledger.
@@ -68,6 +68,6 @@ small JSON cache + AkShare + Eastmoney public APIs + CNINFO public search/PDF en
 - Industry peer discovery.
 - Index / sector component data.
 - Convertible bonds / funds.
-- Announcement PDF text quality scoring for difficult scanned/embedded-font filings.
+- Announcement PDF quality scoring for scanned filings that require OCR.
 - Export formats for downstream tools.
 - Optional integration examples kept outside the core MCP server.
