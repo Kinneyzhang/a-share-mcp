@@ -54,7 +54,7 @@ def main() -> int:
         call(proc, {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
         tools = call(proc, {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
         names = [t["name"] for t in tools["result"]["tools"]]  # type: ignore[index]
-        required = {"search_stock", "get_realtime_quote", "get_daily_history", "get_financial_summary", "get_company_snapshot"}
+        required = {"search_stock", "get_realtime_quote", "get_daily_history", "get_financial_summary", "get_company_snapshot", "get_announcement_detail"}
         assert required.issubset(set(names)), names
         search = tool_call(proc, 3, "search_stock", {"keyword": "贵州茅台", "limit": 3})
         assert search["ok"] is True and search["records"], search
@@ -66,7 +66,12 @@ def main() -> int:
         assert snapshot["ok"] is True and snapshot["quote"] and snapshot["sources"], snapshot
         pack = tool_call(proc, 7, "get_research_pack", {"symbol": "600519", "history_days": 20, "announcement_limit": 2, "include_reports": "false"})
         assert pack["ok"] is True and pack["source_ledger"] and "price" in pack, pack
-        print(json.dumps({"ok": True, "tools": len(names), "search_first": search["records"][0], "quote_name": quote["quote"].get("name"), "history_count": hist["count"], "snapshot_name": snapshot.get("name"), "snapshot_partial": snapshot.get("partial"), "research_pack_name": pack.get("name")}, ensure_ascii=False, indent=2))
+        announcements = tool_call(proc, 8, "search_announcements", {"symbol": "600519", "limit": 1})
+        assert announcements["ok"] is True and "fields" in announcements, announcements
+        if announcements["records"]:
+            detail = tool_call(proc, 9, "get_announcement_detail", {"detail_url": announcements["records"][0]["detail_url"], "include_text": False})
+            assert detail["ok"] is True and detail["announcement"].get("pdf_url"), detail
+        print(json.dumps({"ok": True, "tools": len(names), "search_first": search["records"][0], "quote_name": quote["quote"].get("name"), "history_count": hist["count"], "snapshot_name": snapshot.get("name"), "snapshot_partial": snapshot.get("partial"), "research_pack_name": pack.get("name"), "announcement_count": announcements.get("count")}, ensure_ascii=False, indent=2))
         return 0
     finally:
         proc.terminate()

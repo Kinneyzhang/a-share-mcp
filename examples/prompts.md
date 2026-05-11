@@ -52,12 +52,16 @@ Expected tools:
 Search recent CNINFO announcements for 宁德时代 and summarize which filings deserve manual review. Treat announcement links as primary evidence.
 ```
 
-Expected tool:
+Expected tools:
 
 ```json
 {
   "tool": "search_announcements",
   "arguments": {"symbol": "300750", "start_date": "20260101", "limit": 10}
+}
+{
+  "tool": "get_announcement_detail",
+  "arguments": {"detail_url": "<detail_url from search_announcements>", "include_text": false}
 }
 ```
 

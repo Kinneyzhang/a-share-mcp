@@ -11,12 +11,14 @@ import datetime as _dt
 import hashlib
 import json
 import math
+import io
 import os
 import re
 import time
 from functools import wraps
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import parse_qs, quote, urlparse
 
 import pandas as pd
 import requests
@@ -43,7 +45,7 @@ def _env_int(name: str, default: int) -> int:
 
 DEFAULT_CACHE_DIR = Path(os.getenv("A_SHARE_MCP_CACHE_DIR", Path.home() / ".cache" / "a-share-mcp"))
 DEFAULT_CACHE_TTL_SECONDS = _env_int("A_SHARE_MCP_CACHE_TTL_SECONDS", 300)
-CACHE_SCHEMA_VERSION = "2"
+CACHE_SCHEMA_VERSION = "3"
 
 
 def _today_yyyymmdd() -> str:
@@ -454,31 +456,165 @@ def get_financial_summary(symbol: str, start_year: str | int = "2024") -> dict[s
     }
 
 
+CNINFO_BASE_URL = "http://www.cninfo.com.cn"
+CNINFO_STATIC_BASE_URL = "http://static.cninfo.com.cn"
+
+
+def _to_cninfo_datetime(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, (int, float)):
+        # CNINFO announcementTime is Unix milliseconds in UTC+8 business time.
+        return _dt.datetime.fromtimestamp(float(value) / 1000, tz=_dt.timezone.utc).astimezone(_dt.timezone(_dt.timedelta(hours=8))).replace(tzinfo=None).strftime("%Y-%m-%d %H:%M:%S")
+    text = str(value).strip().replace("T", " ")
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        return f"{text} 00:00:00"
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", text):
+        return text
+    if re.fullmatch(r"\d{8}", text):
+        return f"{text[:4]}-{text[4:6]}-{text[6:]} 00:00:00"
+    return text[:32] or None
+
+
+def _cninfo_detail_url(symbol: str | None, announcement_id: str | None, org_id: str | None, announcement_time: str | None) -> str | None:
+    if not (symbol and announcement_id):
+        return None
+    url = f"{CNINFO_BASE_URL}/new/disclosure/detail?stockCode={symbol}&announcementId={announcement_id}"
+    if org_id:
+        url += f"&orgId={org_id}"
+    if announcement_time:
+        url += f"&announcementTime={quote(announcement_time)}"
+    return url
+
+
+def _cninfo_pdf_url(adjunct_url: Any) -> str | None:
+    text = clean_text(adjunct_url, max_len=240)
+    if not text:
+        return None
+    if text.startswith(("http://", "https://")):
+        return text
+    return f"{CNINFO_STATIC_BASE_URL}/{text.lstrip('/')}"
+
+
+def _infer_cninfo_pdf_url(announcement_id: str | None, announcement_time: str | None) -> str | None:
+    if not (announcement_id and announcement_time):
+        return None
+    date_part = announcement_time[:10]
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_part):
+        return None
+    return f"{CNINFO_STATIC_BASE_URL}/finalpage/{date_part}/{announcement_id}.PDF"
+
+
+def normalize_announcement_record(record: dict[str, Any]) -> dict[str, Any]:
+    """Normalize CNINFO/AkShare announcement rows into stable public fields."""
+    symbol = clean_text(record.get("secCode") or record.get("代码") or record.get("symbol"), max_len=16)
+    if symbol:
+        symbol = normalize_symbol(symbol)
+    name = clean_text(record.get("secName") or record.get("简称") or record.get("name"), max_len=80) or None
+    title = clean_text(record.get("announcementTitle") or record.get("公告标题") or record.get("title"), max_len=240) or None
+    announcement_id = clean_text(record.get("announcementId") or record.get("announcement_id"), max_len=40) or None
+    org_id = clean_text(record.get("orgId") or record.get("org_id"), max_len=40) or None
+    published_at = _to_cninfo_datetime(record.get("announcementTime") or record.get("公告时间") or record.get("published_at"))
+    detail_url = clean_text(record.get("公告链接") or record.get("detail_url"), max_len=500) or _cninfo_detail_url(symbol, announcement_id, org_id, published_at)
+    pdf_url = _cninfo_pdf_url(record.get("adjunctUrl") or record.get("pdf_url")) or _infer_cninfo_pdf_url(announcement_id, published_at)
+    file_type = clean_text(record.get("adjunctType") or record.get("file_type"), max_len=20) or ("PDF" if pdf_url else None)
+    return {
+        "symbol": symbol or None,
+        "name": name,
+        "title": title,
+        "published_at": published_at,
+        "announcement_id": announcement_id,
+        "org_id": org_id,
+        "detail_url": detail_url,
+        "pdf_url": pdf_url,
+        "pdf_size_kb": _clean_scalar(record.get("adjunctSize") or record.get("pdf_size_kb")),
+        "file_type": file_type,
+        "source": "cninfo" if (announcement_id or pdf_url or detail_url and "cninfo" in detail_url) else "eastmoney",
+    }
+
+
+def parse_announcement_detail_url(detail_url: str) -> dict[str, str | None]:
+    parsed = urlparse(clean_text(detail_url, max_len=600))
+    params = parse_qs(parsed.query)
+    return {
+        "symbol": (params.get("stockCode") or [None])[0],
+        "announcement_id": (params.get("announcementId") or [None])[0],
+        "org_id": (params.get("orgId") or [None])[0],
+        "announcement_time": _to_cninfo_datetime((params.get("announcementTime") or [None])[0]),
+    }
+
+
+def _fetch_cninfo_announcements(symbol: str, keyword: str, category: str, start: str, end: str, limit: int) -> list[dict[str, Any]]:
+    stock_item = symbol
+    try:
+        # CNINFO's search endpoint expects "code,orgId" for reliable company
+        # filtering. Reuse AkShare's public-data mapping without exposing it.
+        aks = require_akshare()
+        get_stock_json = getattr(aks.stock_zh_a_disclosure_report_cninfo, "__globals__", {}).get("__get_stock_json")
+        if get_stock_json:
+            org_id = get_stock_json("沪深京").get(symbol)
+            if org_id:
+                stock_item = f"{symbol},{org_id}"
+    except Exception:
+        pass
+    payload = {
+        "pageNum": "1",
+        "pageSize": str(limit),
+        "column": "szse",
+        "tabName": "fulltext",
+        "plate": "",
+        "stock": stock_item,
+        "searchkey": keyword,
+        "secid": "",
+        "category": category,
+        "trade": "",
+        "seDate": f"{start[:4]}-{start[4:6]}-{start[6:]}~{end[:4]}-{end[4:6]}-{end[6:]}",
+        "sortName": "",
+        "sortType": "",
+        "isHLtitle": "true",
+    }
+    r = requests.post(
+        f"{CNINFO_BASE_URL}/new/hisAnnouncement/query",
+        data=payload,
+        headers={"User-Agent": EASTMONEY_HEADERS["User-Agent"], "Referer": f"{CNINFO_BASE_URL}/new/commonUrl/pageOfSearch?url=disclosure/list/search"},
+        timeout=20,
+    )
+    r.raise_for_status()
+    payload_json = r.json()
+    return list(payload_json.get("announcements") or [])[:limit]
+
+
 @cached(ttl_seconds=3600)
 def search_announcements(symbol: str, keyword: str = "", start_date: str | None = None, end_date: str | None = None, category: str = "", limit: int = 20) -> dict[str, Any]:
     code = normalize_symbol(symbol)
     keyword = clean_text(keyword, max_len=120)
     category = clean_text(category, max_len=40)
     limit = clamp_int(limit, default=20, minimum=1, maximum=100)
-    aks = require_akshare()
     start = clean_date(start_date, (_dt.date.today() - _dt.timedelta(days=365)).strftime("%Y%m%d"))
     end = clean_date(end_date, _today_yyyymmdd())
     try:
-        df = aks.stock_zh_a_disclosure_report_cninfo(
-            symbol=code,
-            market="沪深京",
-            keyword=keyword or "",
-            category=category or "",
-            start_date=start,
-            end_date=end,
-        )
-        source = "akshare.stock_zh_a_disclosure_report_cninfo/cninfo"
+        raw_records = _fetch_cninfo_announcements(code, keyword, category, start, end, limit)
+        records = [normalize_announcement_record(row) for row in raw_records]
+        source = "cninfo.hisAnnouncement.query"
     except Exception:
-        df = aks.stock_individual_notice_report(security=code, symbol=category or "全部", begin_date=start, end_date=end)
-        if keyword:
-            joined = df.astype(str).agg(" ".join, axis=1)
-            df = df[joined.str.contains(keyword, case=False, regex=False, na=False)]
-        source = "akshare.stock_individual_notice_report/eastmoney"
+        aks = require_akshare()
+        try:
+            df = aks.stock_zh_a_disclosure_report_cninfo(
+                symbol=code,
+                market="沪深京",
+                keyword=keyword or "",
+                category=category or "",
+                start_date=start,
+                end_date=end,
+            )
+            source = "akshare.stock_zh_a_disclosure_report_cninfo/cninfo"
+        except Exception:
+            df = aks.stock_individual_notice_report(security=code, symbol=category or "全部", begin_date=start, end_date=end)
+            if keyword:
+                joined = df.astype(str).agg(" ".join, axis=1)
+                df = df[joined.str.contains(keyword, case=False, regex=False, na=False)]
+            source = "akshare.stock_individual_notice_report/eastmoney"
+        records = [normalize_announcement_record(row) for row in df_to_records(df, limit=limit)]
     return {
         "ok": True,
         "symbol": code,
@@ -487,8 +623,84 @@ def search_announcements(symbol: str, keyword: str = "", start_date: str | None 
         "category": category,
         "start_date": start,
         "end_date": end,
-        "count": min(len(df), limit),
-        "records": df_to_records(df, limit=limit),
+        "count": min(len(records), limit),
+        "records": records[:limit],
+        "fields": ["symbol", "name", "title", "published_at", "announcement_id", "org_id", "detail_url", "pdf_url", "pdf_size_kb", "file_type", "source"],
+    }
+
+
+def _sanitize_extracted_text(text: str, max_chars: int) -> str:
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", " ", text)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()[:max_chars]
+
+
+def _extract_pdf_text(pdf_bytes: bytes, max_chars: int) -> tuple[str | None, str, str | None]:
+    if not pdf_bytes.startswith(b"%PDF"):
+        return None, "error", "downloaded file is not a PDF"
+    try:
+        from pypdf import PdfReader  # type: ignore
+    except Exception as exc:
+        return None, "unavailable", f"pypdf unavailable: {type(exc).__name__}: {str(exc)[:120]}"
+    try:
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        chunks = []
+        for page in reader.pages:
+            text = page.extract_text() or ""
+            if text:
+                chunks.append(text)
+            if sum(len(c) for c in chunks) >= max_chars:
+                break
+        text = _sanitize_extracted_text("\n".join(chunks), max_chars=max_chars)
+        return text if text else "", "ok", None
+    except Exception as exc:
+        return None, "error", f"PDF text extraction failed: {type(exc).__name__}: {str(exc)[:160]}"
+
+
+@cached(ttl_seconds=6 * 3600)
+def get_announcement_detail(symbol: str | None = None, announcement_id: str | None = None, detail_url: str | None = None, org_id: str | None = None, announcement_time: str | None = None, include_text: bool = False, max_chars: int = 4000) -> dict[str, Any]:
+    """Return normalized announcement metadata and optional PDF text preview."""
+    include_text = parse_bool(include_text, default=False)
+    max_chars = clamp_int(max_chars, default=4000, minimum=200, maximum=20000)
+    parsed: dict[str, Any] = {}
+    if detail_url:
+        parsed = parse_announcement_detail_url(detail_url)
+    code = normalize_symbol(symbol or parsed.get("symbol") or "")
+    aid = clean_text(announcement_id or parsed.get("announcement_id"), max_len=40)
+    oid = clean_text(org_id or parsed.get("org_id"), max_len=40) or None
+    atime = _to_cninfo_datetime(announcement_time or parsed.get("announcement_time"))
+    if not aid:
+        raise ValueError("announcement_id or detail_url is required")
+    announcement = normalize_announcement_record({
+        "secCode": code,
+        "orgId": oid,
+        "announcementId": aid,
+        "announcementTime": atime,
+        "公告链接": detail_url,
+    })
+    text = None
+    text_status = "skipped"
+    text_error = None
+    content_length = None
+    if include_text and announcement.get("pdf_url"):
+        r = requests.get(str(announcement["pdf_url"]), headers=EASTMONEY_HEADERS, timeout=30)
+        r.raise_for_status()
+        content_length = len(r.content)
+        text, text_status, text_error = _extract_pdf_text(r.content, max_chars=max_chars)
+    return {
+        "ok": True,
+        "symbol": code,
+        "source": "cninfo",
+        "announcement": announcement,
+        "text": text,
+        "text_status": text_status,
+        "text_error": text_error,
+        "content_length": content_length,
+        "warnings": [
+            "For research and education only; not investment advice.",
+            "Announcement text extraction is best-effort; use the PDF URL as canonical source.",
+        ],
     }
 
 

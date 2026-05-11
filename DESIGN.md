@@ -33,7 +33,7 @@ a_share_mcp.server
   ↓
 a_share_mcp.data
   ↓
-small JSON cache + AkShare + Eastmoney public APIs + CNINFO through AkShare
+small JSON cache + AkShare + Eastmoney public APIs + CNINFO public search/PDF endpoints
 ```
 
 ## Tool design principles
@@ -55,6 +55,7 @@ small JSON cache + AkShare + Eastmoney public APIs + CNINFO through AkShare
 - Financial summary.
 - Business composition.
 - Announcement search.
+- Normalized announcement detail metadata, canonical PDF URLs, and bounded best-effort PDF text extraction.
 - Research report search.
 - One-call company snapshot.
 - Structured research/data pack with source ledger.
@@ -67,6 +68,6 @@ small JSON cache + AkShare + Eastmoney public APIs + CNINFO through AkShare
 - Industry peer discovery.
 - Index / sector component data.
 - Convertible bonds / funds.
-- Announcement PDF download and text extraction.
+- Announcement PDF text quality scoring for difficult scanned/embedded-font filings.
 - Export formats for downstream tools.
 - Optional integration examples kept outside the core MCP server.

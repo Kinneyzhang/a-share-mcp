@@ -22,7 +22,9 @@ jobs:
       - name: Compile
         run: python -m py_compile a_share_mcp/*.py scripts/*.py
       - name: Deterministic MCP protocol smoke test
-        run: python scripts/protocol_smoke.py
+        run: |
+          python scripts/protocol_smoke.py
+          python scripts/test_v030_announcements.py
       - name: Secret pattern scan
         run: |
           python - <<'PY'

@@ -14,7 +14,7 @@ from typing import Any, Callable
 from . import data
 
 SERVER_NAME = "a-share-mcp"
-SERVER_VERSION = "0.2.0"
+SERVER_VERSION = "0.3.0"
 
 
 def _tool_schema() -> list[dict[str, Any]]:
@@ -131,6 +131,23 @@ def _tool_schema() -> list[dict[str, Any]]:
             },
         },
         {
+            "name": "get_announcement_detail",
+            "description": "Get normalized CNINFO announcement metadata, canonical PDF URL, and optional PDF text preview.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string", "description": "A-share code. Optional when detail_url contains stockCode."},
+                    "announcement_id": {"type": "string", "description": "CNINFO announcementId. Optional when detail_url is provided."},
+                    "detail_url": {"type": "string", "description": "CNINFO disclosure detail URL."},
+                    "org_id": {"type": "string", "description": "CNINFO orgId, if known."},
+                    "announcement_time": {"type": "string", "description": "YYYY-MM-DD or YYYY-MM-DD HH:MM:SS, if known."},
+                    "include_text": {"type": "boolean", "default": False},
+                    "max_chars": {"type": "integer", "minimum": 200, "maximum": 20000, "default": 4000},
+                },
+                "additionalProperties": False,
+            },
+        },
+        {
             "name": "get_company_snapshot",
             "description": "Build an agent-friendly A-share research pack: quote, profile, price stats, financial summary, business composition, recent announcements.",
             "inputSchema": {
@@ -187,6 +204,7 @@ def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
         "get_financial_summary": data.get_financial_summary,
         "get_business_composition": data.get_business_composition,
         "search_announcements": data.search_announcements,
+        "get_announcement_detail": data.get_announcement_detail,
         "get_company_snapshot": data.get_company_snapshot,
         "get_research_pack": data.get_research_pack,
         "search_research_reports": data.search_research_reports,

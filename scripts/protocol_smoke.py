@@ -39,7 +39,7 @@ def main() -> int:
         request(proc, {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
         tools = request(proc, {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
         names = [t["name"] for t in tools["result"]["tools"]]  # type: ignore[index]
-        required = {"search_stock", "get_realtime_quote", "get_financial_summary", "get_company_snapshot", "get_research_pack"}
+        required = {"search_stock", "get_realtime_quote", "get_financial_summary", "get_company_snapshot", "get_research_pack", "get_announcement_detail"}
         assert required.issubset(set(names)), names
         err = request(proc, {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "unknown_tool", "arguments": {}}})
         assert err and err["result"].get("isError") is True, err

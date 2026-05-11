@@ -1,0 +1,8 @@
+{
+  "tool": "get_announcement_detail",
+  "arguments": {
+    "detail_url": "http://www.cninfo.com.cn/new/disclosure/detail?stockCode=603259&announcementId=1225278835&orgId=9900035584&announcementTime=2026-05-07%2000:00:00",
+    "include_text": false,
+    "max_chars": 4000
+  }
+}

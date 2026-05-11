@@ -28,7 +28,8 @@ There are already broad financial-data MCP servers. This project intentionally s
 - `get_financial_indicators` — Raw financial indicator table.
 - `get_financial_summary` — Compact core financial metrics for agents.
 - `get_business_composition` — Business / revenue composition table.
-- `search_announcements` — CNINFO / Eastmoney announcement search.
+- `search_announcements` — CNINFO / Eastmoney announcement search with normalized IDs, detail URLs, and PDF URLs.
+- `get_announcement_detail` — Normalize a CNINFO announcement detail link and optionally extract a bounded PDF text preview.
 - `search_research_reports` — Public broker research search for background reading.
 - `get_company_snapshot` — One-call research pack: quote, profile, price stats, financial summary, business composition, and recent announcements.
 - `get_research_pack` — Structured company data pack with price records, financials, business composition, announcements, optional broker research, and a source ledger.
@@ -99,7 +100,7 @@ Live smoke output includes:
 ```json
 {
   "ok": true,
-  "tools": 11,
+  "tools": 13,
   "quote_name": "贵州茅台"
 }
 ```
@@ -130,6 +131,18 @@ Build a structured data pack with source ledger:
 {
   "tool": "get_research_pack",
   "arguments": {"symbol": "603259", "history_days": 120, "announcement_limit": 10, "include_reports": false}
+}
+```
+
+Get normalized announcement metadata and PDF URL:
+
+```json
+{
+  "tool": "get_announcement_detail",
+  "arguments": {
+    "detail_url": "http://www.cninfo.com.cn/new/disclosure/detail?stockCode=603259&announcementId=1225278835&orgId=9900035584&announcementTime=2026-05-07%2000:00:00",
+    "include_text": false
+  }
 }
 ```
 
