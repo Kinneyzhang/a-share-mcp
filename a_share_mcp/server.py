@@ -14,7 +14,7 @@ from typing import Any, Callable
 from . import data
 
 SERVER_NAME = "a-share-mcp"
-SERVER_VERSION = "0.3.2"
+SERVER_VERSION = "0.4.0"
 
 
 def _tool_schema() -> list[dict[str, Any]]:
@@ -180,6 +180,32 @@ def _tool_schema() -> list[dict[str, Any]]:
             },
         },
         {
+            "name": "get_industry_peers",
+            "description": "Get same-industry A-share peers with valuation and market-cap fields.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 30},
+                },
+                "required": ["symbol"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "get_peer_comparison",
+            "description": "Compare one A-share company against same-industry peers using simple percentile ranks.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 30},
+                },
+                "required": ["symbol"],
+                "additionalProperties": False,
+            },
+        },
+        {
             "name": "search_research_reports",
             "description": "Search public broker research reports from Eastmoney for background reading.",
             "inputSchema": {
@@ -209,6 +235,8 @@ def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
         "get_announcement_detail": data.get_announcement_detail,
         "get_company_snapshot": data.get_company_snapshot,
         "get_research_pack": data.get_research_pack,
+        "get_industry_peers": data.get_industry_peers,
+        "get_peer_comparison": data.get_peer_comparison,
         "search_research_reports": data.search_research_reports,
     }
     if name not in tools:

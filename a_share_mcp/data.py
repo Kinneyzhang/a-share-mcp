@@ -1096,6 +1096,184 @@ def get_research_pack(symbol: str, history_days: int = 120, announcement_limit: 
     }
 
 
+
+def _safe_float(value: Any) -> float | None:
+    try:
+        if value in (None, "", "-"):
+            return None
+        parsed = float(value)
+        if math.isnan(parsed) or math.isinf(parsed):
+            return None
+        return parsed
+    except Exception:
+        return None
+
+
+def _a_share_spot_records(limit: int = 6000) -> dict[str, Any]:
+    """Return A-share spot records, preferring AkShare with Eastmoney fallback."""
+    limit = clamp_int(limit, default=6000, minimum=1, maximum=6000)
+    try:
+        aks = require_akshare()
+        df = aks.stock_zh_a_spot_em()
+        return {"ok": True, "source": "akshare.stock_zh_a_spot_em/eastmoney", "records": df_to_records(df, limit=limit)}
+    except Exception as ak_exc:
+        url = "https://push2.eastmoney.com/api/qt/clist/get"
+        params = {
+            "pn": "1",
+            "pz": str(limit),
+            "po": "1",
+            "np": "1",
+            "fltt": "2",
+            "invt": "2",
+            "fid": "f3",
+            "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81",
+            "fields": "f12,f14,f2,f3,f8,f9,f20,f21,f23,f100,f13",
+        }
+        try:
+            r = requests.get(url, params=params, headers=EASTMONEY_HEADERS, timeout=30)
+            r.raise_for_status()
+            rows = (((r.json() or {}).get("data") or {}).get("diff") or [])[:limit]
+        except Exception as em_exc:
+            return {"ok": False, "source": "a_share_spot_unavailable", "records": [], "error": type(em_exc).__name__, "message": str(em_exc)[:200], "akshare_error": type(ak_exc).__name__}
+        records = []
+        for row in rows:
+            records.append({
+                "代码": row.get("f12"),
+                "名称": row.get("f14"),
+                "最新价": row.get("f2"),
+                "涨跌幅": row.get("f3"),
+                "换手率": row.get("f8"),
+                "市盈率-动态": row.get("f9"),
+                "总市值": row.get("f20"),
+                "流通市值": row.get("f21"),
+                "市净率": row.get("f23"),
+                "行业": row.get("f100"),
+            })
+        return {"ok": True, "source": f"eastmoney.push2.clist fallback after {type(ak_exc).__name__}", "records": records}
+
+
+def _spot_record_to_peer(record: dict[str, Any]) -> dict[str, Any]:
+    code = normalize_symbol(str(record.get("代码") or record.get("symbol") or record.get("股票代码") or ""))
+    return {
+        "symbol": code,
+        "name": record.get("名称") or record.get("股票简称") or record.get("name"),
+        "market": market_prefix(code),
+        "industry": record.get("行业") or record.get("所处行业"),
+        "price": _safe_float(record.get("最新价")),
+        "change_pct": _safe_float(record.get("涨跌幅")),
+        "turnover_rate_pct": _safe_float(record.get("换手率")),
+        "total_market_cap": _safe_float(record.get("总市值")),
+        "float_market_cap": _safe_float(record.get("流通市值")),
+        "pe_ttm": _safe_float(record.get("市盈率-动态") or record.get("市盈率TTM") or record.get("市盈率")),
+        "pb": _safe_float(record.get("市净率")),
+    }
+
+
+def _percentile_rank(values: list[float], target: float | None) -> float | None:
+    if target is None:
+        return None
+    clean = sorted(v for v in values if v is not None and not math.isnan(v))
+    if not clean:
+        return None
+    below_or_equal = sum(1 for v in clean if v <= target)
+    return round(below_or_equal / len(clean) * 100, 4)
+
+
+@cached(ttl_seconds=1800)
+def get_industry_peers(symbol: str, limit: int = 30) -> dict[str, Any]:
+    code = normalize_symbol(symbol)
+    limit = clamp_int(limit, default=30, minimum=1, maximum=100)
+    target_quote = get_realtime_quote(code)
+    industry = ((target_quote.get("quote") or {}).get("industry"))
+    spot = _a_share_spot_records()
+    if spot.get("ok") is False:
+        q = target_quote.get("quote") or {}
+        target = {
+            "symbol": code,
+            "name": q.get("name"),
+            "market": market_prefix(code),
+            "industry": industry,
+            "price": q.get("price"),
+            "change_pct": q.get("change_pct"),
+            "turnover_rate_pct": q.get("turnover_rate_pct"),
+            "total_market_cap": q.get("total_market_cap"),
+            "float_market_cap": q.get("float_market_cap"),
+            "pe_ttm": q.get("pe_ttm"),
+            "pb": q.get("pb"),
+        }
+        return {
+            "ok": True,
+            "partial": True,
+            "symbol": code,
+            "industry": industry,
+            "source": spot.get("source"),
+            "count": 1,
+            "records": [target],
+            "warnings": ["For research and education only; not investment advice.", f"Peer universe unavailable: {spot.get('error')}: {spot.get('message')}"]
+        }
+    peers = []
+    for record in spot.get("records", []):
+        try:
+            peer = _spot_record_to_peer(record)
+        except Exception:
+            continue
+        if industry and peer.get("industry") != industry:
+            continue
+        peers.append(peer)
+    peers = sorted(peers, key=lambda r: (r.get("total_market_cap") is None, -(r.get("total_market_cap") or 0)))[:limit]
+    return {
+        "ok": True,
+        "symbol": code,
+        "industry": industry,
+        "source": spot.get("source"),
+        "count": len(peers),
+        "records": peers,
+        "warnings": ["For research and education only; not investment advice.", "Peer lists are based on public industry labels and may differ across data vendors."],
+    }
+
+
+@cached(ttl_seconds=1800)
+def get_peer_comparison(symbol: str, limit: int = 30) -> dict[str, Any]:
+    code = normalize_symbol(symbol)
+    peers_result = get_industry_peers(code, limit=limit)
+    peers = peers_result.get("records", [])
+    target = next((p for p in peers if p.get("symbol") == code), None)
+    if target is None:
+        q = (get_realtime_quote(code).get("quote") or {})
+        target = {
+            "symbol": code,
+            "name": q.get("name"),
+            "market": market_prefix(code),
+            "industry": peers_result.get("industry"),
+            "price": q.get("price"),
+            "change_pct": q.get("change_pct"),
+            "total_market_cap": q.get("total_market_cap"),
+            "float_market_cap": q.get("float_market_cap"),
+            "pe_ttm": q.get("pe_ttm"),
+            "pb": q.get("pb"),
+        }
+    metrics = ["total_market_cap", "float_market_cap", "pe_ttm", "pb", "change_pct", "turnover_rate_pct"]
+    comparison = {}
+    for metric in metrics:
+        values = [_safe_float(p.get(metric)) for p in peers]
+        target_value = _safe_float(target.get(metric))
+        comparison[metric] = {
+            "target_value": target_value,
+            "percentile_rank": _percentile_rank([v for v in values if v is not None], target_value),
+            "peer_median": round(pd.Series([v for v in values if v is not None]).median(), 4) if any(v is not None for v in values) else None,
+        }
+    return {
+        "ok": True,
+        "symbol": code,
+        "industry": peers_result.get("industry"),
+        "source": peers_result.get("source"),
+        "target": target,
+        "peer_count": len(peers),
+        "comparison": comparison,
+        "peers": peers,
+        "warnings": ["For research and education only; not investment advice.", "Percentiles are simple ranks within the returned peer set, not valuation conclusions."],
+    }
+
 def data_healthcheck() -> dict[str, Any]:
     result: dict[str, Any] = {
         "ok": True,

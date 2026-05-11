@@ -33,6 +33,8 @@ There are already broad financial-data MCP servers. This project intentionally s
 - `search_research_reports` — Public broker research search for background reading.
 - `get_company_snapshot` — One-call research pack: quote, profile, price stats, financial summary, business composition, and recent announcements.
 - `get_research_pack` — Structured company data pack with price records, financials, business composition, announcements, optional broker research, and a source ledger.
+- `get_industry_peers` — Same-industry A-share peers with valuation and market-cap fields.
+- `get_peer_comparison` — Simple percentile comparison against same-industry peers.
 
 ## Install
 
@@ -185,6 +187,7 @@ Tool responses include a `cache` object when served through the cache wrapper.
 - Quote data can be unavailable outside market windows; a zero intraday value should not be treated as a real zero price.
 - Financial indicator fields are source-defined; always verify report period and accounting scope.
 - Announcement text extraction is best-effort. In `text_mode=auto`, the server tries embedded PDF text first, then OCR fallback when the embedded text is empty or garbled. When `text_status` is `poor_quality`, treat `text` as unreliable and use `pdf_url` as the canonical source.
+- Peer comparison tools are simple data summaries, not valuation judgments or investment ratings.
 - This server does not execute trades, connect to broker accounts, or produce investment recommendations.
 
 ## License
