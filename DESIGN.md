@@ -39,35 +39,45 @@ small JSON cache + AkShare + Eastmoney public APIs + CNINFO public search/PDF en
 ## Tool design principles
 
 1. Every tool returns `source`.
-2. Date, adjust mode, category, and count are explicit.
-3. Financial raw tables preserve Chinese column names because they encode business meaning.
-4. Agent-facing summary tools reduce table noise.
-5. Research reports are marked as biased background material.
-6. Errors are returned as structured JSON text content, not swallowed.
+2. Composite and v1-style tools prefer `source_ledger` and `data_quality` metadata.
+3. Date, adjust mode, category, and count are explicit.
+4. Financial raw tables preserve Chinese column names because they encode business meaning.
+5. Agent-facing summary tools reduce table noise.
+6. Research reports are marked as biased background material.
+7. Partial failures should be isolated when possible, especially batch and composite calls.
+8. Errors are returned as structured JSON text content, not swallowed.
 
-## v0.1.0 scope
+## v1.x stable scope
 
 - Company/security search.
 - Company profile.
-- Quote snapshot.
-- Daily history.
-- Raw financial indicators.
-- Financial summary.
+- Quote snapshot and batch quotes.
+- Daily history with Eastmoney primary source and AkShare/Sina fallback.
+- Raw financial indicators, summary, and trend extraction.
 - Business composition.
-- Announcement search.
-- Normalized announcement detail metadata, canonical PDF URLs, bounded best-effort PDF text extraction, embedded-text quality metrics, and optional OCR fallback.
+- Announcement search, detail metadata, PDF URL, text preview, OCR fallback, and page layout extraction.
+- Announcement keyword classification.
 - Research report search.
-- One-call company snapshot.
-- Structured research/data pack with source ledger.
-- Best-effort JSON cache.
-- MCP initialize/list/call smoke test.
-- Public README, license, package metadata, CI, examples.
+- Company snapshot, structured research pack, batch snapshots, and market overview.
+- Industry peer discovery and peer comparison.
+- Index, sector snapshot, and sector components.
+- Financial event pack: dividend, repurchase, shareholder change, financing, restricted-share release.
+- Best-effort JSON cache with status and clear operations.
+- MCP initialize/list/call smoke test plus optional live v1 smoke test.
+- Public README, Chinese README, license, package metadata, changelog, migration guide, examples, and CI.
+
+## Compatibility policy
+
+Starting from v1.0.0:
+
+- Patch releases fix bugs and should not intentionally remove response fields.
+- Minor releases may add tools, optional parameters, or response fields.
+- Breaking changes require a new major version and migration notes.
 
 ## Future extensions
 
-- Industry peer discovery.
-- Index / sector component data.
-- Convertible bonds / funds.
-- OCR table/layout quality scoring for scanned filings that require better page structure recovery.
+- More robust financial statement normalization.
+- Better table reconstruction from announcement PDFs.
+- Optional additional data-source adapters while keeping no-token defaults.
 - Export formats for downstream tools.
 - Optional integration examples kept outside the core MCP server.

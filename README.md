@@ -41,6 +41,14 @@ There are already broad financial-data MCP servers. This project intentionally s
 - `get_financial_events_pack` — Dividend, repurchase, shareholder-change, financing, and restricted-release event pack.
 - `get_dividend_events` / `get_repurchase_events` / `get_shareholder_change_events` / `get_financing_events` / `get_restricted_release_events` — Event-specific tools.
 - `get_announcement_layout` — Best-effort PDF page layout extraction with OCR lines or embedded text blocks.
+- `batch_get_quotes` — Batch quote snapshots with partial-failure isolation.
+- `batch_company_snapshot` — Batch company snapshots.
+- `compare_companies` — Compare selected companies by quote/valuation metrics.
+- `screen_stocks` — Simple data screening by industry, market cap, and PE.
+- `get_market_overview` — Major indices plus industry/concept board snapshots.
+- `get_financial_trends` — Agent-friendly trend summary derived from financial indicators.
+- `classify_announcements` — Keyword-based announcement category summary.
+- `get_cache_status` / `clear_cache` — Inspect or clear the local JSON cache.
 
 ## Install
 
@@ -114,7 +122,7 @@ Live smoke output includes:
 ```json
 {
   "ok": true,
-  "tools": 13,
+  "tools": 34,
   "quote_name": "贵州茅台"
 }
 ```
@@ -180,7 +188,7 @@ A small best-effort JSON cache is enabled by default:
 - Override path: `A_SHARE_MCP_CACHE_DIR=/path/to/cache`
 - Disable most cache behavior by setting very small TTLs in code or clearing the directory.
 
-Tool responses include a `cache` object when served through the cache wrapper.
+Tool responses include a `cache` object when served through the cache wrapper. Use `get_cache_status` and `clear_cache` for operational inspection and cleanup.
 
 ## Data sources
 
@@ -195,6 +203,14 @@ Tool responses include a `cache` object when served through the cache wrapper.
 - Announcement text extraction is best-effort. In `text_mode=auto`, the server tries embedded PDF text first, then OCR fallback when the embedded text is empty or garbled. When `text_status` is `poor_quality`, treat `text` as unreliable and use `pdf_url` as the canonical source.
 - Peer comparison tools are simple data summaries, not valuation judgments or investment ratings.
 - This server does not execute trades, connect to broker accounts, or produce investment recommendations.
+
+## API stability
+
+Starting with `v1.0.0`, tool names and existing argument names are treated as stable:
+
+- Patch releases fix bugs and should not remove fields.
+- Minor releases may add tools, optional arguments, or response fields.
+- Breaking changes require a new major version and migration notes.
 
 ## License
 

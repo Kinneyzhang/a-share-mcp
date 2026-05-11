@@ -78,3 +78,29 @@ Expected tool:
 ```json
 {"tool": "get_financial_summary", "arguments": {"symbol": "600519", "start_year": "2024"}}
 ```
+
+## Batch quotes and market overview
+
+```text
+Use A Share MCP to fetch quotes for 600519 and 603259, then get a compact market overview. Keep the output data-oriented and avoid buy/sell advice.
+```
+
+Expected tools:
+
+```json
+{"tool": "batch_get_quotes", "arguments": {"symbols": ["600519", "603259"], "limit": 2}}
+{"tool": "get_market_overview", "arguments": {"limit": 5}}
+```
+
+## Financial trends and announcement classification
+
+```text
+Use A Share MCP to summarize financial trends and classify recent announcements for 603259. Treat the result as research input only.
+```
+
+Expected tools:
+
+```json
+{"tool": "get_financial_trends", "arguments": {"symbol": "603259", "start_year": "2021", "limit": 8}}
+{"tool": "classify_announcements", "arguments": {"symbol": "603259", "limit": 20}}
+```

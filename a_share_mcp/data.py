@@ -1581,6 +1581,272 @@ def get_announcement_layout(detail_url: str | None = None, symbol: str | None = 
     metrics = assess_text_quality(text)
     return {"ok": error is None, "symbol": code, "source": "cninfo/pdf-layout", "announcement": announcement, "method": method, "engine": engine, "pages_processed": len(pages), "pages": pages, "text_quality_metrics": metrics, "error": error, "warnings": ["For research and education only; not investment advice.", "Layout extraction is best-effort; use pdf_url as canonical source."]}
 
+
+def _utc_now_iso() -> str:
+    return _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _collect_sources(payload: Any, path: str = "") -> list[dict[str, Any]]:
+    sources: list[dict[str, Any]] = []
+    if isinstance(payload, dict):
+        src = payload.get("source")
+        if src:
+            sources.append({"path": path or "$", "source": str(src), "ok": payload.get("ok"), "partial": payload.get("partial", False)})
+        for key, value in payload.items():
+            if key in {"source_ledger", "cache"}:
+                continue
+            child = f"{path}.{key}" if path else str(key)
+            sources.extend(_collect_sources(value, child))
+    elif isinstance(payload, list):
+        for idx, value in enumerate(payload[:20]):
+            sources.extend(_collect_sources(value, f"{path}[{idx}]"))
+    seen: set[tuple[str, str]] = set()
+    unique: list[dict[str, Any]] = []
+    for item in sources:
+        key = (item.get("path", ""), item.get("source", ""))
+        if key not in seen:
+            seen.add(key)
+            unique.append(item)
+    return unique
+
+
+def _ensure_disclaimer(warnings: Any) -> list[str]:
+    base = "For research and education only; not investment advice."
+    out: list[str] = []
+    if isinstance(warnings, list):
+        out = [str(w) for w in warnings]
+    elif warnings:
+        out = [str(warnings)]
+    if base not in out:
+        out.insert(0, base)
+    return out
+
+
+def with_quality_metadata(payload: dict[str, Any], tool: str | None = None) -> dict[str, Any]:
+    """Add a consistent source/freshness/quality envelope without changing data semantics."""
+    out = dict(payload)
+    if tool:
+        out.setdefault("tool", tool)
+    out["warnings"] = _ensure_disclaimer(out.get("warnings"))
+    out.setdefault("source_ledger", _collect_sources(out))
+    out.setdefault(
+        "data_quality",
+        {
+            "as_of": _utc_now_iso(),
+            "partial": bool(out.get("partial", False)),
+            "source_count": len(out.get("source_ledger") or []),
+            "cache": out.get("cache"),
+        },
+    )
+    return out
+
+
+def _parse_symbols(symbols: Any, limit: int = 50) -> list[str]:
+    if isinstance(symbols, str):
+        raw = re.split(r"[,\s]+", symbols.strip())
+    else:
+        raw = list(symbols or [])
+    out: list[str] = []
+    for item in raw:
+        try:
+            code = normalize_symbol(str(item))
+        except Exception:
+            continue
+        if code not in out:
+            out.append(code)
+        if len(out) >= limit:
+            break
+    if not out:
+        raise ValueError("at least one valid A-share symbol is required")
+    return out
+
+
+@cached(ttl_seconds=60)
+def batch_get_quotes(symbols: list[str] | str, limit: int = 50) -> dict[str, Any]:
+    codes = _parse_symbols(symbols, limit=clamp_int(limit, default=50, minimum=1, maximum=100))
+    records: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    for code in codes:
+        try:
+            quote = get_realtime_quote(code)
+            if quote.get("ok") is False:
+                errors.append({"symbol": code, "error": quote.get("error"), "message": quote.get("message")})
+                continue
+            q = quote.get("quote") or {}
+            records.append({"symbol": code, **q, "source": quote.get("source")})
+        except Exception as exc:
+            errors.append({"symbol": code, "error": type(exc).__name__, "message": str(exc)[:200]})
+    return with_quality_metadata({"ok": bool(records), "partial": bool(errors), "source": "batch/get_realtime_quote", "requested": codes, "count": len(records), "records": records, "errors": errors}, tool="batch_get_quotes")
+
+
+@cached(ttl_seconds=300)
+def batch_company_snapshot(symbols: list[str] | str, limit: int = 20, history_days: int = 60) -> dict[str, Any]:
+    codes = _parse_symbols(symbols, limit=clamp_int(limit, default=20, minimum=1, maximum=50))
+    history_days = clamp_int(history_days, default=60, minimum=5, maximum=250)
+    records: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
+    for code in codes:
+        try:
+            snap = get_company_snapshot(code, history_days=history_days, announcement_limit=3)
+            if snap.get("ok") is False:
+                errors.append({"symbol": code, "error": snap.get("error"), "message": snap.get("message")})
+            else:
+                records.append(snap)
+        except Exception as exc:
+            errors.append({"symbol": code, "error": type(exc).__name__, "message": str(exc)[:200]})
+    return with_quality_metadata({"ok": bool(records), "partial": bool(errors), "source": "batch/get_company_snapshot", "requested": codes, "count": len(records), "records": records, "errors": errors}, tool="batch_company_snapshot")
+
+
+def _metric_value(record: dict[str, Any], metric: str) -> float | None:
+    return _safe_float(record.get(metric) or (record.get("quote") or {}).get(metric))
+
+
+@cached(ttl_seconds=300)
+def compare_companies(symbols: list[str] | str, metrics: str = "total_market_cap,float_market_cap,pe_ttm,pb,change_pct,turnover_rate_pct", limit: int = 30) -> dict[str, Any]:
+    codes = _parse_symbols(symbols, limit=clamp_int(limit, default=30, minimum=2, maximum=100))
+    metric_list = [clean_text(m, 40) for m in str(metrics).split(",") if clean_text(m, 40)] or ["total_market_cap", "pe_ttm", "pb"]
+    quotes = batch_get_quotes(codes, limit=len(codes))
+    records = []
+    for item in quotes.get("records", []):
+        row = {"symbol": item.get("symbol"), "name": item.get("name"), "market": item.get("market"), "industry": item.get("industry"), "metrics": {}}
+        for metric in metric_list:
+            val = _metric_value(item, metric)
+            values = [_metric_value(other, metric) for other in quotes.get("records", [])]
+            clean = sorted([v for v in values if v is not None], reverse=True)
+            rank_desc = clean.index(val) + 1 if val in clean else None
+            row["metrics"][metric] = {"value": val, "rank_desc": rank_desc, "percentile_rank": _percentile_rank(clean, val)}
+        records.append(row)
+    return with_quality_metadata({"ok": bool(records), "partial": quotes.get("partial", False), "source": "batch_get_quotes/derived", "metrics": metric_list, "count": len(records), "records": records, "errors": quotes.get("errors", [])}, tool="compare_companies")
+
+
+@cached(ttl_seconds=300)
+def screen_stocks(industry: str | None = None, min_market_cap: float | None = None, max_market_cap: float | None = None, min_pe: float | None = None, max_pe: float | None = None, limit: int = 30) -> dict[str, Any]:
+    limit = clamp_int(limit, default=30, minimum=1, maximum=100)
+    spot = _a_share_spot_records()
+    if spot.get("ok") is False:
+        return with_quality_metadata({"ok": True, "partial": True, "source": spot.get("source"), "error": spot.get("error"), "message": spot.get("message"), "count": 0, "records": [], "warnings": [f"Screening universe unavailable: {spot.get('error')}: {spot.get('message')}"]}, tool="screen_stocks")
+    records = []
+    industry_text = clean_text(industry, 80) if industry else ""
+    for raw in spot.get("records", []):
+        try:
+            peer = _spot_record_to_peer(raw)
+        except Exception:
+            continue
+        if industry_text and industry_text not in str(peer.get("industry") or ""):
+            continue
+        cap = _safe_float(peer.get("total_market_cap"))
+        pe = _safe_float(peer.get("pe_ttm"))
+        if min_market_cap is not None and (cap is None or cap < float(min_market_cap)):
+            continue
+        if max_market_cap is not None and (cap is None or cap > float(max_market_cap)):
+            continue
+        if min_pe is not None and (pe is None or pe < float(min_pe)):
+            continue
+        if max_pe is not None and (pe is None or pe > float(max_pe)):
+            continue
+        records.append(peer)
+        if len(records) >= limit:
+            break
+    return with_quality_metadata({"ok": True, "source": spot.get("source"), "filters": {"industry": industry_text or None, "min_market_cap": min_market_cap, "max_market_cap": max_market_cap, "min_pe": min_pe, "max_pe": max_pe}, "count": len(records), "records": records}, tool="screen_stocks")
+
+
+@cached(ttl_seconds=300)
+def get_market_overview(limit: int = 10) -> dict[str, Any]:
+    limit = clamp_int(limit, default=10, minimum=1, maximum=50)
+    sections = {
+        "indices": _safe_section("indices", lambda: {"ok": True, "source": "eastmoney.push2.ulist/index", "records": [get_index_snapshot(code).get("index") for code in ["000001", "399001", "399006", "000300", "000905"]]}),
+        "industries": _safe_section("industries", lambda: get_sector_snapshot("industry", limit=limit)),
+        "concepts": _safe_section("concepts", lambda: get_sector_snapshot("concept", limit=limit)),
+    }
+    return with_quality_metadata({"ok": any(s.get("ok") for s in sections.values()), "partial": any(not s.get("ok") or s.get("partial") for s in sections.values()), "source": "market_overview/composite", "sections": sections, "source_ledger": _source_ledger(sections)}, tool="get_market_overview")
+
+
+def _first_present(record: dict[str, Any], names: list[str]) -> Any:
+    for name in names:
+        if name in record and record.get(name) is not None:
+            return record.get(name)
+    return None
+
+
+@cached(ttl_seconds=24 * 3600)
+def get_financial_trends(symbol: str, start_year: str | int = "2021", limit: int = 12) -> dict[str, Any]:
+    code = normalize_symbol(symbol)
+    indicators = get_financial_indicators(code, start_year=start_year, limit=limit)
+    records = indicators.get("records", [])
+    latest = records[0] if records else {}
+    trends = {
+        "profitability": {
+            "net_profit_yoy_pct": _first_present(latest, ["净利润同比增长率(%)", "净利润增长率(%)", "净利润同比增长率"]),
+            "roe_pct": _first_present(latest, ["净资产收益率(%)", "加权净资产收益率(%)", "摊薄净资产收益率(%)"]),
+            "gross_margin_pct": _first_present(latest, ["销售毛利率(%)", "毛利率(%)"]),
+        },
+        "growth": {
+            "revenue_yoy_pct": _first_present(latest, ["营业收入同比增长率(%)", "主营业务收入增长率(%)", "营业收入增长率(%)"]),
+            "eps_yoy_pct": _first_present(latest, ["每股收益同比增长率(%)", "基本每股收益同比增长率(%)"]),
+        },
+        "risk": {
+            "debt_to_asset_pct": _first_present(latest, ["资产负债率(%)", "资产负债率"]),
+            "current_ratio": _first_present(latest, ["流动比率", "流动比率(倍)"]),
+        },
+        "cashflow": {
+            "operating_cashflow_per_share": _first_present(latest, ["每股经营性现金流(元)", "每股经营现金流量(元)"])
+        },
+    }
+    return with_quality_metadata({"ok": indicators.get("ok", False), "symbol": code, "source": indicators.get("source"), "latest_period": latest.get("日期") or latest.get("报告期"), "trends": trends, "records_used": len(records), "raw_records": records[:3]}, tool="get_financial_trends")
+
+
+ANNOUNCEMENT_CATEGORY_KEYWORDS = {
+    "periodic_report": ["年度报告", "半年度报告", "季度报告", "一季报", "三季报"],
+    "dividend": ["分红", "派息", "权益分派", "利润分配"],
+    "repurchase": ["回购"],
+    "shareholder_change": ["增持", "减持", "权益变动", "持股变动"],
+    "financing": ["增发", "配股", "可转债", "融资", "定向发行"],
+    "restricted_release": ["限售", "解禁"],
+    "risk": ["风险提示", "监管", "问询", "诉讼", "仲裁"],
+}
+
+
+@cached(ttl_seconds=1800)
+def classify_announcements(symbol: str, limit: int = 50) -> dict[str, Any]:
+    code = normalize_symbol(symbol)
+    limit = clamp_int(limit, default=50, minimum=1, maximum=100)
+    ann = search_announcements(code, limit=limit)
+    categories = {name: {"count": 0, "records": []} for name in ANNOUNCEMENT_CATEGORY_KEYWORDS}
+    categories["other"] = {"count": 0, "records": []}
+    for record in ann.get("records", []) or ann.get("announcements", []) or []:
+        title = str(record.get("title") or record.get("公告标题") or record.get("announcementTitle") or record)
+        matched = False
+        for category, keywords in ANNOUNCEMENT_CATEGORY_KEYWORDS.items():
+            if any(k in title for k in keywords):
+                categories[category]["records"].append(record)
+                categories[category]["count"] += 1
+                matched = True
+        if not matched:
+            categories["other"]["records"].append(record)
+            categories["other"]["count"] += 1
+    return with_quality_metadata({"ok": ann.get("ok", False), "symbol": code, "source": ann.get("source"), "total": sum(c["count"] for c in categories.values()), "categories": categories}, tool="classify_announcements")
+
+
+def get_cache_status() -> dict[str, Any]:
+    files = list(DEFAULT_CACHE_DIR.glob("*.json")) if DEFAULT_CACHE_DIR.exists() else []
+    total_bytes = sum(p.stat().st_size for p in files if p.exists())
+    newest = max((p.stat().st_mtime for p in files), default=None)
+    oldest = min((p.stat().st_mtime for p in files), default=None)
+    return with_quality_metadata({"ok": True, "source": "local-json-cache", "cache_dir": str(DEFAULT_CACHE_DIR), "file_count": len(files), "total_bytes": total_bytes, "oldest_mtime": oldest, "newest_mtime": newest}, tool="get_cache_status")
+
+
+def clear_cache() -> dict[str, Any]:
+    removed = 0
+    errors: list[str] = []
+    if DEFAULT_CACHE_DIR.exists():
+        for path in DEFAULT_CACHE_DIR.glob("*.json"):
+            try:
+                path.unlink()
+                removed += 1
+            except Exception as exc:
+                errors.append(f"{path.name}: {type(exc).__name__}: {str(exc)[:120]}")
+    return with_quality_metadata({"ok": not errors, "partial": bool(errors), "source": "local-json-cache", "cache_dir": str(DEFAULT_CACHE_DIR), "removed_count": removed, "errors": errors}, tool="clear_cache")
+
 def data_healthcheck() -> dict[str, Any]:
     result: dict[str, Any] = {
         "ok": True,

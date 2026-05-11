@@ -14,7 +14,7 @@ from typing import Any, Callable
 from . import data
 
 SERVER_NAME = "a-share-mcp"
-SERVER_VERSION = "0.7.0"
+SERVER_VERSION = "1.1.0"
 
 
 def _tool_schema() -> list[dict[str, Any]]:
@@ -255,6 +255,52 @@ def _tool_schema() -> list[dict[str, Any]]:
             "description": "Extract best-effort page layout blocks/lines from a CNINFO announcement PDF using OCR or embedded text.",
             "inputSchema": {"type": "object", "properties": {"detail_url": {"type": "string"}, "symbol": {"type": "string"}, "announcement_id": {"type": "string"}, "org_id": {"type": "string"}, "announcement_time": {"type": "string"}, "method": {"type": "string", "enum": ["ocr", "embedded"], "default": "ocr"}, "max_pages": {"type": "integer", "minimum": 1, "maximum": 20, "default": 3}}, "additionalProperties": False},
         },
+
+        {
+            "name": "batch_get_quotes",
+            "description": "Get realtime quote snapshots for multiple A-share symbols with partial-failure isolation.",
+            "inputSchema": {"type": "object", "properties": {"symbols": {"oneOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}]}, "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}}, "required": ["symbols"], "additionalProperties": False},
+        },
+        {
+            "name": "batch_company_snapshot",
+            "description": "Build company snapshots for multiple A-share symbols with partial-failure isolation.",
+            "inputSchema": {"type": "object", "properties": {"symbols": {"oneOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}]}, "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20}, "history_days": {"type": "integer", "minimum": 5, "maximum": 250, "default": 60}}, "required": ["symbols"], "additionalProperties": False},
+        },
+        {
+            "name": "compare_companies",
+            "description": "Compare multiple A-share companies by quote/valuation metrics using simple ranks.",
+            "inputSchema": {"type": "object", "properties": {"symbols": {"oneOf": [{"type": "array", "items": {"type": "string"}}, {"type": "string"}]}, "metrics": {"type": "string", "default": "total_market_cap,float_market_cap,pe_ttm,pb,change_pct,turnover_rate_pct"}, "limit": {"type": "integer", "minimum": 2, "maximum": 100, "default": 30}}, "required": ["symbols"], "additionalProperties": False},
+        },
+        {
+            "name": "screen_stocks",
+            "description": "Screen A-share stocks by public quote fields such as industry, market cap, and PE.",
+            "inputSchema": {"type": "object", "properties": {"industry": {"type": "string"}, "min_market_cap": {"type": "number"}, "max_market_cap": {"type": "number"}, "min_pe": {"type": "number"}, "max_pe": {"type": "number"}, "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 30}}, "additionalProperties": False},
+        },
+        {
+            "name": "get_market_overview",
+            "description": "Get a compact market overview: major indices plus industry/concept board snapshots.",
+            "inputSchema": {"type": "object", "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 10}}, "additionalProperties": False},
+        },
+        {
+            "name": "get_financial_trends",
+            "description": "Extract an agent-friendly trend summary from financial indicator records.",
+            "inputSchema": {"type": "object", "properties": {"symbol": {"type": "string"}, "start_year": {"type": "string", "default": "2021"}, "limit": {"type": "integer", "minimum": 1, "maximum": 40, "default": 12}}, "required": ["symbol"], "additionalProperties": False},
+        },
+        {
+            "name": "classify_announcements",
+            "description": "Classify recent announcements into periodic report, dividend, repurchase, financing, risk, and other categories.",
+            "inputSchema": {"type": "object", "properties": {"symbol": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 50}}, "required": ["symbol"], "additionalProperties": False},
+        },
+        {
+            "name": "get_cache_status",
+            "description": "Inspect local JSON cache file count, size, and timestamps.",
+            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+        {
+            "name": "clear_cache",
+            "description": "Clear local JSON cache files for this MCP server.",
+            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
         {
             "name": "search_research_reports",
             "description": "Search public broker research reports from Eastmoney for background reading.",
@@ -297,6 +343,15 @@ def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
         "get_financing_events": data.get_financing_events,
         "get_restricted_release_events": data.get_restricted_release_events,
         "get_announcement_layout": data.get_announcement_layout,
+        "batch_get_quotes": data.batch_get_quotes,
+        "batch_company_snapshot": data.batch_company_snapshot,
+        "compare_companies": data.compare_companies,
+        "screen_stocks": data.screen_stocks,
+        "get_market_overview": data.get_market_overview,
+        "get_financial_trends": data.get_financial_trends,
+        "classify_announcements": data.classify_announcements,
+        "get_cache_status": lambda **_: data.get_cache_status(),
+        "clear_cache": lambda **_: data.clear_cache(),
         "search_research_reports": data.search_research_reports,
     }
     if name not in tools:

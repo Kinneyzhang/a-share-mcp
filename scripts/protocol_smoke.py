@@ -39,7 +39,7 @@ def main() -> int:
         request(proc, {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
         tools = request(proc, {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
         names = [t["name"] for t in tools["result"]["tools"]]  # type: ignore[index]
-        required = {"search_stock", "get_realtime_quote", "get_financial_summary", "get_company_snapshot", "get_research_pack", "get_announcement_detail", "get_industry_peers", "get_peer_comparison", "get_index_snapshot", "get_sector_snapshot", "get_sector_components", "get_financial_events_pack", "get_dividend_events", "get_repurchase_events", "get_shareholder_change_events", "get_financing_events", "get_restricted_release_events", "get_announcement_layout"}
+        required = {"search_stock", "get_realtime_quote", "get_financial_summary", "get_company_snapshot", "get_research_pack", "get_announcement_detail", "get_industry_peers", "get_peer_comparison", "get_index_snapshot", "get_sector_snapshot", "get_sector_components", "get_financial_events_pack", "get_dividend_events", "get_repurchase_events", "get_shareholder_change_events", "get_financing_events", "get_restricted_release_events", "get_announcement_layout", "batch_get_quotes", "batch_company_snapshot", "compare_companies", "screen_stocks", "get_market_overview", "get_financial_trends", "classify_announcements", "get_cache_status", "clear_cache"}
         assert required.issubset(set(names)), names
         err = request(proc, {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "unknown_tool", "arguments": {}}})
         assert err and err["result"].get("isError") is True, err
