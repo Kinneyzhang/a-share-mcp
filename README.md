@@ -35,6 +35,9 @@ There are already broad financial-data MCP servers. This project intentionally s
 - `get_research_pack` — Structured company data pack with price records, financials, business composition, announcements, optional broker research, and a source ledger.
 - `get_industry_peers` — Same-industry A-share peers with valuation and market-cap fields.
 - `get_peer_comparison` — Simple percentile comparison against same-industry peers.
+- `get_index_snapshot` — Mainland China index quote snapshot.
+- `get_sector_snapshot` — Industry/concept board snapshot list.
+- `get_sector_components` — Component stocks for an industry/concept board.
 
 ## Install
 

@@ -1274,6 +1274,92 @@ def get_peer_comparison(symbol: str, limit: int = 30) -> dict[str, Any]:
         "warnings": ["For research and education only; not investment advice.", "Percentiles are simple ranks within the returned peer set, not valuation conclusions."],
     }
 
+
+INDEX_SECID_MAP = {
+    "000001": "1.000001",
+    "399001": "0.399001",
+    "399006": "0.399006",
+    "000300": "1.000300",
+    "000905": "1.000905",
+    "000852": "1.000852",
+}
+
+def _index_secid(symbol: str) -> str:
+    code = normalize_symbol(symbol)
+    return INDEX_SECID_MAP.get(code, f"1.{code}" if code.startswith("0") else f"0.{code}")
+
+
+@cached(ttl_seconds=60)
+def get_index_snapshot(symbol: str = "000001") -> dict[str, Any]:
+    code = normalize_symbol(symbol)
+    fields = "f12,f14,f2,f3,f4,f5,f6,f7,f15,f16,f17,f18,f124"
+    url = "https://push2.eastmoney.com/api/qt/ulist.np/get"
+    params = {"fltt": "2", "secids": _index_secid(code), "fields": fields}
+    r = requests.get(url, params=params, headers=EASTMONEY_HEADERS, timeout=20)
+    r.raise_for_status()
+    diff = (((r.json() or {}).get("data") or {}).get("diff") or [])
+    if not diff:
+        raise RuntimeError(f"no index data returned for {code}")
+    q = diff[0]
+    return {
+        "ok": True,
+        "symbol": code,
+        "source": "eastmoney.push2.ulist/index",
+        "index": {
+            "code": q.get("f12"),
+            "name": q.get("f14"),
+            "price": q.get("f2"),
+            "change_pct": q.get("f3"),
+            "change": q.get("f4"),
+            "volume": q.get("f5"),
+            "turnover": q.get("f6"),
+            "amplitude_pct": q.get("f7"),
+            "high": q.get("f15"),
+            "low": q.get("f16"),
+            "open": q.get("f17"),
+            "prev_close": q.get("f18"),
+            "quote_timestamp": q.get("f124"),
+        },
+        "warnings": ["For research and education only; not investment advice."],
+    }
+
+
+@cached(ttl_seconds=1800)
+def get_sector_snapshot(sector_type: str = "industry", limit: int = 30) -> dict[str, Any]:
+    sector_type = clean_text(sector_type, max_len=16).lower() or "industry"
+    limit = clamp_int(limit, default=30, minimum=1, maximum=100)
+    try:
+        aks = require_akshare()
+        if sector_type == "concept":
+            df = aks.stock_board_concept_name_em()
+            source = "akshare.stock_board_concept_name_em/eastmoney"
+        else:
+            df = aks.stock_board_industry_name_em()
+            source = "akshare.stock_board_industry_name_em/eastmoney"
+        return {"ok": True, "sector_type": sector_type, "source": source, "count": min(len(df), limit), "records": df_to_records(df, limit=limit), "warnings": ["For research and education only; not investment advice."]}
+    except Exception as exc:
+        return {"ok": True, "partial": True, "sector_type": sector_type, "source": "sector_snapshot_unavailable", "count": 0, "records": [], "warnings": [f"Sector endpoint unavailable: {type(exc).__name__}: {str(exc)[:160]}"]}
+
+
+@cached(ttl_seconds=1800)
+def get_sector_components(sector_name: str, sector_type: str = "industry", limit: int = 50) -> dict[str, Any]:
+    sector_name = clean_text(sector_name, max_len=80)
+    if not sector_name:
+        raise ValueError("sector_name is required")
+    sector_type = clean_text(sector_type, max_len=16).lower() or "industry"
+    limit = clamp_int(limit, default=50, minimum=1, maximum=200)
+    try:
+        aks = require_akshare()
+        if sector_type == "concept":
+            df = aks.stock_board_concept_cons_em(symbol=sector_name)
+            source = "akshare.stock_board_concept_cons_em/eastmoney"
+        else:
+            df = aks.stock_board_industry_cons_em(symbol=sector_name)
+            source = "akshare.stock_board_industry_cons_em/eastmoney"
+        return {"ok": True, "sector_type": sector_type, "sector_name": sector_name, "source": source, "count": min(len(df), limit), "records": df_to_records(df, limit=limit), "warnings": ["For research and education only; not investment advice."]}
+    except Exception as exc:
+        return {"ok": True, "partial": True, "sector_type": sector_type, "sector_name": sector_name, "source": "sector_components_unavailable", "count": 0, "records": [], "warnings": [f"Sector components endpoint unavailable: {type(exc).__name__}: {str(exc)[:160]}"]}
+
 def data_healthcheck() -> dict[str, Any]:
     result: dict[str, Any] = {
         "ok": True,
