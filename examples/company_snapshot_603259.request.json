@@ -1,0 +1,9 @@
+{
+  "tool": "get_company_snapshot",
+  "arguments": {
+    "symbol": "603259",
+    "history_days": 60,
+    "announcement_limit": 5
+  },
+  "note": "Run this through an MCP client. Output intentionally omitted because public market data changes over time."
+}

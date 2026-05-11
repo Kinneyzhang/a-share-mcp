@@ -1,91 +1,162 @@
 # A Share MCP
 
-本项目是一个本地 stdio MCP server，把 A 股数据能力暴露给 Hermes / Claude / 其他 MCP client。
+[English](README.md) | [简体中文](README.zh-CN.md)
 
-定位：
+Source-labeled, agent-friendly Chinese A-share data tools exposed as a local stdio MCP server.
 
-- 个人研究与学习用途；
-- 给 AIIterate、BuJo research、LLM Wiki、LOA 审查流程提供 A 股数据工具；
-- 不构成投资建议，不自动给买入/卖出结论。
+A Share MCP is designed for research workflows rather than trading automation. It helps AI agents retrieve A-share quotes, price history, financial indicators, business composition, announcements, and compact company research packs with explicit data-source metadata.
 
-## 当前能力
+> For research and education only. This project does not provide investment advice, trading signals, brokerage integration, or buy/sell recommendations.
 
-工具：
+## Why this project
 
-- `a_share_healthcheck`：检查 AkShare / Eastmoney 数据通路。
-- `get_stock_profile`：个股基础资料。
-- `get_realtime_quote`：行情快照、市值、PE/PB、行业等。
-- `get_daily_history`：日线 OHLCV，支持 `none/qfq/hfq`。
-- `get_financial_indicators`：财务指标表。
-- `get_business_composition`：主营构成。
-- `search_announcements`：巨潮 / 东方财富公告搜索。
-- `search_research_reports`：东方财富个股研报搜索。注意研报只能做背景材料，不能当 canonical evidence。
+There are already broad financial-data MCP servers. This project intentionally stays lightweight and research-oriented:
 
-数据源：
+- **No token required for the MVP** — uses public Eastmoney endpoints and AkShare wrappers.
+- **Source-labeled outputs** — every tool returns `source` metadata for downstream audit and citation.
+- **Agent-friendly summaries** — `get_financial_summary` and `get_company_snapshot` reduce noisy raw tables into useful research payloads.
+- **Local-first stdio MCP** — easy to run in Claude Desktop, Hermes, Cursor, or any MCP client.
+- **Conservative by design** — public data can be delayed or incomplete; important facts should be verified against official filings.
 
-- Eastmoney public endpoints；
-- AkShare 封装的 Sina / Eastmoney / CNINFO 数据接口。
+## Tools
 
-## 运行
+- `a_share_healthcheck` — Check AkShare / Eastmoney reachability.
+- `search_stock` — Search A-share securities by Chinese name or code.
+- `get_stock_profile` — Basic company profile.
+- `get_realtime_quote` — Quote snapshot, valuation fields, market cap, industry.
+- `get_daily_history` — Daily OHLCV history with `none/qfq/hfq` adjustment options.
+- `get_financial_indicators` — Raw financial indicator table.
+- `get_financial_summary` — Compact core financial metrics for agents.
+- `get_business_composition` — Business / revenue composition table.
+- `search_announcements` — CNINFO / Eastmoney announcement search.
+- `search_research_reports` — Public broker research search for background reading.
+- `get_company_snapshot` — One-call research pack: quote, profile, price stats, financial summary, business composition, and recent announcements.
 
-使用全局 Python 环境，不新建 venv：
+## Install
 
 ```bash
-/home/geekinney/.venv/global/bin/python /home/geekinney/vibe/a-share-mcp/scripts/a_share_mcp_server.py
+git clone https://github.com/Kinneyzhang/a-share-mcp.git
+cd a-share-mcp
+python -m pip install -e .
 ```
 
-## Hermes MCP 配置片段
+Run the MCP server:
 
-加入 `~/.hermes/config.yaml`：
+```bash
+a-share-mcp
+```
+
+Or run from source:
+
+```bash
+python scripts/a_share_mcp_server.py
+```
+
+## MCP client configuration
+
+Use an absolute path for `args` when configuring desktop/agent clients.
 
 ```yaml
 mcp_servers:
   a_share:
-    command: "/home/geekinney/.venv/global/bin/python"
-    args: ["/home/geekinney/vibe/a-share-mcp/scripts/a_share_mcp_server.py"]
+    command: "python"
+    args: ["/ABSOLUTE/PATH/TO/a-share-mcp/scripts/a_share_mcp_server.py"]
     timeout: 180
     connect_timeout: 60
 ```
 
-重启 Hermes 后，工具名会变成类似：
+If installed as a console script:
 
-```text
-mcp_a_share_get_stock_profile
-mcp_a_share_get_realtime_quote
-mcp_a_share_get_daily_history
-mcp_a_share_get_financial_indicators
-mcp_a_share_get_business_composition
-mcp_a_share_search_announcements
-mcp_a_share_search_research_reports
+```yaml
+mcp_servers:
+  a_share:
+    command: "a-share-mcp"
+    args: []
+    timeout: 180
+    connect_timeout: 60
 ```
 
-## CLI smoke test
+Tool names are usually prefixed by your client, e.g. `mcp_a_share_get_company_snapshot`.
+
+## Smoke test
+
+Deterministic protocol smoke test, suitable for CI:
 
 ```bash
-/home/geekinney/.venv/global/bin/python scripts/smoke_mcp.py
+python -m py_compile a_share_mcp/*.py scripts/*.py
+python scripts/protocol_smoke.py
 ```
 
-## AIIterate / BuJo / LLM Wiki 建议用法
+Optional live-data smoke test, useful before local releases:
 
-推荐作为研究数据层，不作为投资决策器：
-
-```text
-AIIterate 问题/学习 session
-→ A Share MCP 拉取行情、财务、公告、主营构成
-→ 生成学习解释或研究草稿
-→ LOA V2 审查关键数字和事实
-→ BuJo research 保存长文
-→ LLM Wiki 蒸馏公司/行业/概念知识
+```bash
+python scripts/smoke_mcp.py
 ```
 
-## 风险边界
+Live smoke output includes:
 
-A 股数据尤其要注意：
+```json
+{
+  "ok": true,
+  "tools": 11,
+  "quote_name": "贵州茅台"
+}
+```
 
-- 行情可能延迟；
-- 财务口径可能是单季、累计、TTM、年报，不可混用；
-- 价格必须说明复权方式；
-- 概念板块噪音很大；
-- 公告 PDF / 表格抽取可能不完整；
-- 研报观点有立场，只能做辅助材料；
-- 不输出自动买卖建议。
+## Examples
+
+Search by Chinese name:
+
+```json
+{
+  "tool": "search_stock",
+  "arguments": {"keyword": "药明康德", "limit": 5}
+}
+```
+
+Build a company research pack:
+
+```json
+{
+  "tool": "get_company_snapshot",
+  "arguments": {"symbol": "603259", "history_days": 60, "announcement_limit": 5}
+}
+```
+
+Get compact financial metrics:
+
+```json
+{
+  "tool": "get_financial_summary",
+  "arguments": {"symbol": "600519", "start_year": "2024"}
+}
+```
+
+More examples are in [`examples/prompts.md`](examples/prompts.md).
+
+## Cache
+
+A small best-effort JSON cache is enabled by default:
+
+- Default path: `~/.cache/a-share-mcp/`
+- Override path: `A_SHARE_MCP_CACHE_DIR=/path/to/cache`
+- Disable most cache behavior by setting very small TTLs in code or clearing the directory.
+
+Tool responses include a `cache` object when served through the cache wrapper.
+
+## Data sources
+
+- Eastmoney public endpoints for quote and daily kline data.
+- AkShare wrappers for A-share lists, financial indicators, business composition, CNINFO disclosure search, and research reports.
+
+## Limitations
+
+- Public endpoints can change, throttle, or return delayed data.
+- Quote data can be unavailable outside market windows; a zero intraday value should not be treated as a real zero price.
+- Financial indicator fields are source-defined; always verify report period and accounting scope.
+- Broker research can be biased and should only be used as background material.
+- This server does not execute trades, connect to broker accounts, or produce investment recommendations.
+
+## License
+
+MIT

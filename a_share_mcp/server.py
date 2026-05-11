@@ -6,6 +6,7 @@ newline-delimited JSON stdio transport and older Content-Length framed JSON-RPC.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import traceback
 from typing import Any, Callable
@@ -22,6 +23,19 @@ def _tool_schema() -> list[dict[str, Any]]:
             "name": "a_share_healthcheck",
             "description": "Check whether A-share data adapters are reachable.",
             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+        {
+            "name": "search_stock",
+            "description": "Search A-share securities by Chinese name or code.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "keyword": {"type": "string", "description": "Chinese name or code, e.g. 贵州茅台 or 600519"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 10},
+                },
+                "required": ["keyword"],
+                "additionalProperties": False,
+            },
         },
         {
             "name": "get_stock_profile",
@@ -74,6 +88,19 @@ def _tool_schema() -> list[dict[str, Any]]:
             },
         },
         {
+            "name": "get_financial_summary",
+            "description": "Get an agent-friendly summary of core financial indicators for an A-share company.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string"},
+                    "start_year": {"type": "string", "default": "2024"},
+                },
+                "required": ["symbol"],
+                "additionalProperties": False,
+            },
+        },
+        {
             "name": "get_business_composition",
             "description": "Get主营构成/business composition table for an A-share company.",
             "inputSchema": {
@@ -104,6 +131,20 @@ def _tool_schema() -> list[dict[str, Any]]:
             },
         },
         {
+            "name": "get_company_snapshot",
+            "description": "Build an agent-friendly A-share research pack: quote, profile, price stats, financial summary, business composition, recent announcements.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string"},
+                    "history_days": {"type": "integer", "minimum": 5, "maximum": 250, "default": 60},
+                    "announcement_limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
+                },
+                "required": ["symbol"],
+                "additionalProperties": False,
+            },
+        },
+        {
             "name": "search_research_reports",
             "description": "Search public broker research reports from Eastmoney for background reading.",
             "inputSchema": {
@@ -122,12 +163,15 @@ def _tool_schema() -> list[dict[str, Any]]:
 def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
     tools: dict[str, Callable[..., dict[str, Any]]] = {
         "a_share_healthcheck": lambda **_: data.data_healthcheck(),
+        "search_stock": data.search_stock,
         "get_stock_profile": data.get_stock_profile,
         "get_realtime_quote": data.get_realtime_quote,
         "get_daily_history": data.get_daily_history,
         "get_financial_indicators": data.get_financial_indicators,
+        "get_financial_summary": data.get_financial_summary,
         "get_business_composition": data.get_business_composition,
         "search_announcements": data.search_announcements,
+        "get_company_snapshot": data.get_company_snapshot,
         "search_research_reports": data.search_research_reports,
     }
     if name not in tools:
@@ -188,7 +232,7 @@ def _send(payload: dict[str, Any], mode: str = "jsonl") -> None:
 def _handle(msg: dict[str, Any]) -> dict[str, Any] | None:
     method = msg.get("method")
     msg_id = msg.get("id")
-    if method == "notifications/initialized":
+    if msg_id is None:
         return None
     if method == "initialize":
         return {
@@ -212,8 +256,12 @@ def _handle(msg: dict[str, Any]) -> dict[str, Any] | None:
             result = _dispatch(str(name), dict(arguments))
             return {"jsonrpc": "2.0", "id": msg_id, "result": _content(result)}
         except Exception as exc:
-            err = {"ok": False, "error": type(exc).__name__, "message": str(exc), "traceback_tail": traceback.format_exc().splitlines()[-5:]}
-            return {"jsonrpc": "2.0", "id": msg_id, "result": _content(err), "isError": True}
+            err = {"ok": False, "error": type(exc).__name__, "message": str(exc)}
+            if os.getenv("A_SHARE_MCP_DEBUG") == "1":
+                err["traceback_tail"] = traceback.format_exc().splitlines()[-5:]
+            result = _content(err)
+            result["isError"] = True
+            return {"jsonrpc": "2.0", "id": msg_id, "result": result}
     return {"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32601, "message": f"Method not found: {method}"}}
 
 

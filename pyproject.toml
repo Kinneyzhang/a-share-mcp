@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "a-share-mcp"
+version = "0.1.0"
+description = "Source-labeled, agent-friendly Chinese A-share data tools exposed as a local MCP server."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "Kinneyzhang" }]
+keywords = ["mcp", "a-share", "china-stock", "akshare", "eastmoney", "cninfo", "finance", "agent"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Financial and Insurance Industry",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Office/Business :: Financial",
+]
+dependencies = [
+  "akshare>=1.18.0",
+  "pandas>=2.0.0",
+  "requests>=2.31.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Kinneyzhang/a-share-mcp"
+Repository = "https://github.com/Kinneyzhang/a-share-mcp"
+Issues = "https://github.com/Kinneyzhang/a-share-mcp/issues"
+
+[project.scripts]
+a-share-mcp = "a_share_mcp.server:main"
+
+[tool.setuptools.packages.find]
+include = ["a_share_mcp*"]
