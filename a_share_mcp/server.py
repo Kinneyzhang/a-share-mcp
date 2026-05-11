@@ -14,7 +14,7 @@ from typing import Any, Callable
 from . import data
 
 SERVER_NAME = "a-share-mcp"
-SERVER_VERSION = "0.3.1"
+SERVER_VERSION = "0.3.2"
 
 
 def _tool_schema() -> list[dict[str, Any]]:
@@ -142,7 +142,9 @@ def _tool_schema() -> list[dict[str, Any]]:
                     "org_id": {"type": "string", "description": "CNINFO orgId, if known."},
                     "announcement_time": {"type": "string", "description": "YYYY-MM-DD or YYYY-MM-DD HH:MM:SS, if known."},
                     "include_text": {"type": "boolean", "default": False},
+                    "text_mode": {"type": "string", "enum": ["auto", "embedded", "ocr"], "default": "auto", "description": "auto tries embedded text first, then OCR fallback when quality is poor/empty."},
                     "max_chars": {"type": "integer", "minimum": 200, "maximum": 20000, "default": 4000},
+                    "max_pages": {"type": "integer", "minimum": 1, "maximum": 20, "default": 3},
                 },
                 "additionalProperties": False,
             },

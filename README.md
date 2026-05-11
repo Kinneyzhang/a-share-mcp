@@ -29,7 +29,7 @@ There are already broad financial-data MCP servers. This project intentionally s
 - `get_financial_summary` — Compact core financial metrics for agents.
 - `get_business_composition` — Business / revenue composition table.
 - `search_announcements` — CNINFO / Eastmoney announcement search with normalized IDs, detail URLs, and PDF URLs.
-- `get_announcement_detail` — Normalize a CNINFO announcement detail link and optionally extract a bounded PDF text preview with quality metrics.
+- `get_announcement_detail` — Normalize a CNINFO announcement detail link and optionally extract a bounded PDF text preview with quality metrics and OCR fallback.
 - `search_research_reports` — Public broker research search for background reading.
 - `get_company_snapshot` — One-call research pack: quote, profile, price stats, financial summary, business composition, and recent announcements.
 - `get_research_pack` — Structured company data pack with price records, financials, business composition, announcements, optional broker research, and a source ledger.
@@ -40,6 +40,12 @@ There are already broad financial-data MCP servers. This project intentionally s
 git clone https://github.com/Kinneyzhang/a-share-mcp.git
 cd a-share-mcp
 python -m pip install -e .
+```
+
+Install with OCR extras when you want automatic PDF OCR fallback:
+
+```bash
+python -m pip install -e '.[ocr]'
 ```
 
 Run the MCP server:
@@ -141,7 +147,8 @@ Get normalized announcement metadata and PDF URL:
   "tool": "get_announcement_detail",
   "arguments": {
     "detail_url": "http://www.cninfo.com.cn/new/disclosure/detail?stockCode=603259&announcementId=1225278835&orgId=9900035584&announcementTime=2026-05-07%2000:00:00",
-    "include_text": false
+    "include_text": false,
+    "text_mode": "auto"
   }
 }
 ```
@@ -177,7 +184,7 @@ Tool responses include a `cache` object when served through the cache wrapper.
 - Public endpoints can change, throttle, or return delayed data.
 - Quote data can be unavailable outside market windows; a zero intraday value should not be treated as a real zero price.
 - Financial indicator fields are source-defined; always verify report period and accounting scope.
-- Announcement text extraction is best-effort. When `text_status` is `poor_quality`, treat `text` as unreliable and use `pdf_url` as the canonical source.
+- Announcement text extraction is best-effort. In `text_mode=auto`, the server tries embedded PDF text first, then OCR fallback when the embedded text is empty or garbled. When `text_status` is `poor_quality`, treat `text` as unreliable and use `pdf_url` as the canonical source.
 - This server does not execute trades, connect to broker accounts, or produce investment recommendations.
 
 ## License

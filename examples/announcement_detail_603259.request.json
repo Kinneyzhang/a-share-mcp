@@ -3,6 +3,8 @@
   "arguments": {
     "detail_url": "http://www.cninfo.com.cn/new/disclosure/detail?stockCode=603259&announcementId=1225278835&orgId=9900035584&announcementTime=2026-05-07%2000:00:00",
     "include_text": true,
+    "text_mode": "auto",
+    "max_pages": 3,
     "max_chars": 4000
   }
 }

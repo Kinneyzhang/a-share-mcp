@@ -61,7 +61,7 @@ Expected tools:
 }
 {
   "tool": "get_announcement_detail",
-  "arguments": {"detail_url": "<detail_url from search_announcements>", "include_text": true, "max_chars": 4000}
+  "arguments": {"detail_url": "<detail_url from search_announcements>", "include_text": true, "text_mode": "auto", "max_pages": 3, "max_chars": 4000}
 }
 ```
 

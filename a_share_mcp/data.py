@@ -45,7 +45,7 @@ def _env_int(name: str, default: int) -> int:
 
 DEFAULT_CACHE_DIR = Path(os.getenv("A_SHARE_MCP_CACHE_DIR", Path.home() / ".cache" / "a-share-mcp"))
 DEFAULT_CACHE_TTL_SECONDS = _env_int("A_SHARE_MCP_CACHE_TTL_SECONDS", 300)
-CACHE_SCHEMA_VERSION = "4"
+CACHE_SCHEMA_VERSION = "5"
 
 
 def _today_yyyymmdd() -> str:
@@ -697,36 +697,121 @@ def assess_text_quality(text: str | None) -> dict[str, Any]:
     }
 
 
-def _extract_pdf_text(pdf_bytes: bytes, max_chars: int) -> tuple[str | None, str, str | None, dict[str, Any] | None]:
-    if not pdf_bytes.startswith(b"%PDF"):
-        return None, "error", "downloaded file is not a PDF", None
+def should_try_ocr(text_mode: str, embedded_status: str) -> bool:
+    mode = clean_text(text_mode, max_len=16).lower() or "auto"
+    if mode == "ocr":
+        return True
+    if mode == "embedded":
+        return False
+    return embedded_status in {"poor_quality", "empty", "error", "unavailable"}
+
+
+def ocr_result_to_text(result: Any) -> str:
+    """Convert RapidOCR result tuples/lists into newline-delimited text."""
+    if not result:
+        return ""
+    lines: list[str] = []
+    for item in result:
+        if isinstance(item, (list, tuple)) and len(item) >= 2:
+            text = item[1]
+            if text is not None:
+                cleaned = clean_text(text, max_len=2000)
+                if cleaned:
+                    lines.append(cleaned)
+    return "\n".join(lines)
+
+
+def _render_pdf_pages(pdf_bytes: bytes, max_pages: int, zoom: float = 2.0) -> list[bytes]:
     try:
-        from pypdf import PdfReader  # type: ignore
+        import fitz  # PyMuPDF
     except Exception as exc:
-        return None, "unavailable", f"pypdf unavailable: {type(exc).__name__}: {str(exc)[:120]}", None
+        raise RuntimeError(f"PyMuPDF unavailable: {type(exc).__name__}: {str(exc)[:120]}") from exc
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    images: list[bytes] = []
+    matrix = fitz.Matrix(zoom, zoom)
+    for page_index in range(min(max_pages, len(doc))):
+        pix = doc[page_index].get_pixmap(matrix=matrix, alpha=False)
+        images.append(pix.tobytes("png"))
+    return images
+
+
+def _extract_ocr_text(pdf_bytes: bytes, max_chars: int, max_pages: int) -> tuple[str | None, str, str | None, dict[str, Any] | None, int, str | None]:
     try:
-        reader = PdfReader(io.BytesIO(pdf_bytes))
-        chunks = []
-        for page in reader.pages:
-            text = page.extract_text() or ""
-            if text:
-                chunks.append(text)
+        from rapidocr_onnxruntime import RapidOCR  # type: ignore
+    except Exception as exc:
+        return None, "unavailable", f"rapidocr_onnxruntime unavailable: {type(exc).__name__}: {str(exc)[:120]}", None, 0, None
+    try:
+        images = _render_pdf_pages(pdf_bytes, max_pages=max_pages)
+        engine = RapidOCR()
+        chunks: list[str] = []
+        for image in images:
+            result, _ = engine(image)
+            page_text = ocr_result_to_text(result)
+            if page_text:
+                chunks.append(page_text)
             if sum(len(c) for c in chunks) >= max_chars:
                 break
         text = _sanitize_extracted_text("\n".join(chunks), max_chars=max_chars)
         metrics = assess_text_quality(text)
         status = "ok" if metrics["quality"] == "good" else "poor_quality" if metrics["quality"] == "poor" else "empty"
-        error = "extracted text appears garbled; use pdf_url as canonical source" if status == "poor_quality" else None
-        return text if text else "", status, error, metrics
+        error = "OCR text appears garbled; use pdf_url as canonical source" if status == "poor_quality" else None
+        return text if text else "", status, error, metrics, len(images), "rapidocr-onnxruntime"
     except Exception as exc:
-        return None, "error", f"PDF text extraction failed: {type(exc).__name__}: {str(exc)[:160]}", None
+        return None, "error", f"OCR extraction failed: {type(exc).__name__}: {str(exc)[:160]}", None, 0, "rapidocr-onnxruntime"
+
+
+def _extract_pdf_text(pdf_bytes: bytes, max_chars: int, text_mode: str = "auto", max_pages: int = 3) -> tuple[str | None, str, str | None, dict[str, Any] | None, str, int, str | None]:
+    text_mode = clean_text(text_mode, max_len=16).lower() or "auto"
+    if text_mode not in {"auto", "embedded", "ocr"}:
+        text_mode = "auto"
+    max_pages = clamp_int(max_pages, default=3, minimum=1, maximum=20)
+    if not pdf_bytes.startswith(b"%PDF"):
+        return None, "error", "downloaded file is not a PDF", None, "none", 0, None
+    embedded_text = None
+    embedded_status = "skipped"
+    embedded_error = None
+    embedded_metrics = None
+    if text_mode in {"auto", "embedded"}:
+        try:
+            from pypdf import PdfReader  # type: ignore
+        except Exception as exc:
+            embedded_status = "unavailable"
+            embedded_error = f"pypdf unavailable: {type(exc).__name__}: {str(exc)[:120]}"
+        else:
+            try:
+                reader = PdfReader(io.BytesIO(pdf_bytes))
+                chunks = []
+                for page in reader.pages[:max_pages]:
+                    text = page.extract_text() or ""
+                    if text:
+                        chunks.append(text)
+                    if sum(len(c) for c in chunks) >= max_chars:
+                        break
+                embedded_text = _sanitize_extracted_text("\n".join(chunks), max_chars=max_chars)
+                embedded_metrics = assess_text_quality(embedded_text)
+                embedded_status = "ok" if embedded_metrics["quality"] == "good" else "poor_quality" if embedded_metrics["quality"] == "poor" else "empty"
+                embedded_error = "extracted text appears garbled; use pdf_url as canonical source" if embedded_status == "poor_quality" else None
+            except Exception as exc:
+                embedded_status = "error"
+                embedded_error = f"PDF text extraction failed: {type(exc).__name__}: {str(exc)[:160]}"
+    if text_mode == "embedded" or not should_try_ocr(text_mode, embedded_status):
+        return embedded_text if embedded_text is not None else "", embedded_status, embedded_error, embedded_metrics, "embedded", max_pages if embedded_status not in {"unavailable", "error", "skipped"} else 0, None
+    ocr_text, ocr_status, ocr_error, ocr_metrics, pages_processed, ocr_engine = _extract_ocr_text(pdf_bytes, max_chars=max_chars, max_pages=max_pages)
+    if text_mode == "auto" and ocr_status in {"unavailable", "error", "empty"} and embedded_text is not None:
+        fallback_error = ocr_error or embedded_error
+        return embedded_text, embedded_status, fallback_error, embedded_metrics, "embedded", max_pages if embedded_status not in {"unavailable", "error", "skipped"} else 0, ocr_engine
+    return ocr_text, ocr_status, ocr_error, ocr_metrics, "ocr", pages_processed, ocr_engine
 
 
 @cached(ttl_seconds=6 * 3600)
-def get_announcement_detail(symbol: str | None = None, announcement_id: str | None = None, detail_url: str | None = None, org_id: str | None = None, announcement_time: str | None = None, include_text: bool = False, max_chars: int = 4000) -> dict[str, Any]:
+def get_announcement_detail(symbol: str | None = None, announcement_id: str | None = None, detail_url: str | None = None, org_id: str | None = None, announcement_time: str | None = None, include_text: bool = False, max_chars: int = 4000, text_mode: str = "auto", max_pages: int = 3) -> dict[str, Any]:
     """Return normalized announcement metadata and optional PDF text preview."""
     include_text = parse_bool(include_text, default=False)
     max_chars = clamp_int(max_chars, default=4000, minimum=200, maximum=20000)
+    text_mode = clean_text(text_mode, max_len=16).lower() or "auto"
+    if text_mode not in {"auto", "embedded", "ocr"}:
+        text_mode = "auto"
+    max_pages = clamp_int(max_pages, default=3, minimum=1, maximum=20)
     parsed: dict[str, Any] = {}
     if detail_url:
         parsed = parse_announcement_detail_url(detail_url)
@@ -749,11 +834,14 @@ def get_announcement_detail(symbol: str | None = None, announcement_id: str | No
     text_quality_metrics = None
     text_error = None
     content_length = None
+    text_extraction_method = "none"
+    pages_processed = 0
+    ocr_engine = None
     if include_text and announcement.get("pdf_url"):
         r = requests.get(str(announcement["pdf_url"]), headers=EASTMONEY_HEADERS, timeout=30)
         r.raise_for_status()
         content_length = len(r.content)
-        text, text_status, text_error, text_quality_metrics = _extract_pdf_text(r.content, max_chars=max_chars)
+        text, text_status, text_error, text_quality_metrics, text_extraction_method, pages_processed, ocr_engine = _extract_pdf_text(r.content, max_chars=max_chars, text_mode=text_mode, max_pages=max_pages)
         text_quality = text_quality_metrics.get("quality") if text_quality_metrics else "unavailable"
     return {
         "ok": True,
@@ -764,6 +852,10 @@ def get_announcement_detail(symbol: str | None = None, announcement_id: str | No
         "text_status": text_status,
         "text_quality": text_quality,
         "text_quality_metrics": text_quality_metrics,
+        "text_extraction_method": text_extraction_method,
+        "pages_processed": pages_processed,
+        "ocr_engine": ocr_engine,
+        "text_mode": text_mode,
         "text_error": text_error,
         "content_length": content_length,
         "warnings": [

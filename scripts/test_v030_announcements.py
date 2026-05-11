@@ -58,6 +58,27 @@ def test_get_announcement_detail_from_url_without_text() -> None:
     assert detail["text_status"] == "skipped"
     assert detail["text_quality"] == "not_requested"
     assert detail["text_quality_metrics"] is None
+    assert detail["text_extraction_method"] == "none"
+    assert detail["pages_processed"] == 0
+
+
+def test_text_mode_ocr_decision_rules() -> None:
+    assert data.should_try_ocr("auto", "poor_quality") is True
+    assert data.should_try_ocr("auto", "empty") is True
+    assert data.should_try_ocr("auto", "ok") is False
+    assert data.should_try_ocr("embedded", "poor_quality") is False
+    assert data.should_try_ocr("ocr", "ok") is True
+
+
+def test_ocr_result_to_text() -> None:
+    result = [
+        [[[0, 0], [1, 0], [1, 1], [0, 1]], "贵州茅台股份有限公司", 0.98],
+        [[[0, 2], [1, 2], [1, 3], [0, 3]], "2025 年年度报告", 0.96],
+    ]
+
+    text = data.ocr_result_to_text(result)
+
+    assert text == "贵州茅台股份有限公司\n2025 年年度报告"
 
 
 def test_text_quality_good_for_normal_chinese_text() -> None:
@@ -84,6 +105,8 @@ def main() -> int:
         test_normalize_cninfo_announcement_record,
         test_parse_announcement_detail_url,
         test_get_announcement_detail_from_url_without_text,
+        test_text_mode_ocr_decision_rules,
+        test_ocr_result_to_text,
         test_text_quality_good_for_normal_chinese_text,
         test_text_quality_poor_for_garbled_pdf_text,
     ]

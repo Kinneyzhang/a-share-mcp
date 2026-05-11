@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "a-share-mcp"
-version = "0.3.1"
+version = "0.3.2"
 description = "Source-labeled, agent-friendly Chinese A-share data tools exposed as a local MCP server."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -27,6 +27,12 @@ dependencies = [
   "pandas>=2.0.0",
   "requests>=2.31.0",
   "pypdf>=4.0.0",
+]
+
+[project.optional-dependencies]
+ocr = [
+  "PyMuPDF>=1.24.0",
+  "rapidocr-onnxruntime>=1.4.0",
 ]
 
 [project.urls]
