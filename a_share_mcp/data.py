@@ -74,11 +74,30 @@ def market_prefix(symbol: str) -> str:
 
 def eastmoney_secid(symbol: str) -> str:
     code = normalize_symbol(symbol)
+    # Eastmoney quote/kline secid convention used by these public endpoints:
+    # 1 = Shanghai, 0 = Shenzhen/Beijing.  Beijing-board symbols commonly start
+    # with 4 or 8 and resolve under market 0 for the endpoints used here.
     market = "1" if market_prefix(code) == "SH" else "0"
-    # Eastmoney also uses market 0 for many Beijing-board endpoints in this
-    # lightweight MVP.  If a BJ code fails, callers should treat it as source
-    # unavailable rather than a definitive absence of data.
     return f"{market}.{code}"
+
+
+def clamp_int(value: Any, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError, OverflowError):
+        parsed = default
+    return max(minimum, min(parsed, maximum))
+
+
+def clean_text(value: Any, max_len: int = 120) -> str:
+    text = "" if value is None else str(value)
+    text = text.strip()
+    return text[:max_len]
+
+
+def clean_date(value: Any, default: str) -> str:
+    text = clean_text(value, max_len=16).replace("-", "")
+    return text if re.fullmatch(r"\d{8}", text) else default
 
 
 def _clean_scalar(value: Any) -> Any:
@@ -161,7 +180,7 @@ def cached(ttl_seconds: int = DEFAULT_CACHE_TTL_SECONDS) -> Callable[[Callable[.
                 cached_value["cache"] = {"hit": True, "ttl_seconds": ttl_seconds, "age_seconds": round(age or 0, 3)}
                 return cached_value
             value = fn(*args, **kwargs)
-            if isinstance(value, dict) and value.get("ok") is True:
+            if isinstance(value, dict) and value.get("ok") is True and value.get("partial") is not True:
                 _cache_set(key, value)
             value = dict(value)
             value["cache"] = {"hit": False, "ttl_seconds": ttl_seconds, "age_seconds": 0}
@@ -175,9 +194,11 @@ def cached(ttl_seconds: int = DEFAULT_CACHE_TTL_SECONDS) -> Callable[[Callable[.
 @cached(ttl_seconds=24 * 3600)
 def search_stock(keyword: str, limit: int = 10) -> dict[str, Any]:
     """Search A-share codes by symbol or Chinese company/security name."""
-    if not keyword or not keyword.strip():
+    keyword = clean_text(keyword, max_len=80)
+    limit = clamp_int(limit, default=10, minimum=1, maximum=50)
+    if not keyword:
         raise ValueError("keyword is required")
-    kw = keyword.strip().upper()
+    kw = keyword.upper()
     aks = require_akshare()
     df = aks.stock_info_a_code_name()
     df = df.rename(columns={"code": "symbol", "name": "name"})
@@ -281,10 +302,14 @@ def get_realtime_quote(symbol: str) -> dict[str, Any]:
 @cached(ttl_seconds=3600)
 def get_daily_history(symbol: str, start_date: str | None = None, end_date: str | None = None, adjust: str = "qfq", limit: int = 60) -> dict[str, Any]:
     code = normalize_symbol(symbol)
-    start = (start_date or "20200101").replace("-", "")
-    end = (end_date or _today_yyyymmdd()).replace("-", "")
+    start = clean_date(start_date, "20200101")
+    end = clean_date(end_date, _today_yyyymmdd())
+    limit = clamp_int(limit, default=60, minimum=1, maximum=500)
+    adjust = clean_text(adjust, max_len=8).lower()
     adjust_map = {"none": "0", "qfq": "1", "hfq": "2"}
-    fqt = adjust_map.get(adjust, "1")
+    if adjust not in adjust_map:
+        adjust = "qfq"
+    fqt = adjust_map[adjust]
     url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
     params = {
         "secid": eastmoney_secid(code),
@@ -294,7 +319,7 @@ def get_daily_history(symbol: str, start_date: str | None = None, end_date: str 
         "fqt": fqt,
         "beg": start,
         "end": end,
-        "lmt": str(max(1, min(int(limit), 500))),
+        "lmt": str(limit),
     }
     r = requests.get(url, params=params, headers=EASTMONEY_HEADERS, timeout=20)
     r.raise_for_status()
@@ -336,6 +361,7 @@ def get_daily_history(symbol: str, start_date: str | None = None, end_date: str 
 @cached(ttl_seconds=24 * 3600)
 def get_financial_indicators(symbol: str, start_year: str | int = "2023", limit: int = 12) -> dict[str, Any]:
     code = normalize_symbol(symbol)
+    limit = clamp_int(limit, default=12, minimum=1, maximum=40)
     aks = require_akshare()
     df = aks.stock_financial_analysis_indicator(symbol=code, start_year=str(start_year))
     return {
@@ -352,6 +378,7 @@ def get_financial_indicators(symbol: str, start_year: str | int = "2023", limit:
 @cached(ttl_seconds=24 * 3600)
 def get_business_composition(symbol: str, limit: int = 30) -> dict[str, Any]:
     code = normalize_symbol(symbol)
+    limit = clamp_int(limit, default=30, minimum=1, maximum=100)
     aks = require_akshare()
     prefixed = f"{market_prefix(code)}{code}"
     df = aks.stock_zygc_em(symbol=prefixed)
@@ -416,9 +443,12 @@ def get_financial_summary(symbol: str, start_year: str | int = "2024") -> dict[s
 @cached(ttl_seconds=3600)
 def search_announcements(symbol: str, keyword: str = "", start_date: str | None = None, end_date: str | None = None, category: str = "", limit: int = 20) -> dict[str, Any]:
     code = normalize_symbol(symbol)
+    keyword = clean_text(keyword, max_len=120)
+    category = clean_text(category, max_len=40)
+    limit = clamp_int(limit, default=20, minimum=1, maximum=100)
     aks = require_akshare()
-    start = (start_date or (_dt.date.today() - _dt.timedelta(days=365)).strftime("%Y%m%d")).replace("-", "")
-    end = (end_date or _today_yyyymmdd()).replace("-", "")
+    start = clean_date(start_date, (_dt.date.today() - _dt.timedelta(days=365)).strftime("%Y%m%d"))
+    end = clean_date(end_date, _today_yyyymmdd())
     try:
         df = aks.stock_zh_a_disclosure_report_cninfo(
             symbol=code,
@@ -451,6 +481,7 @@ def search_announcements(symbol: str, keyword: str = "", start_date: str | None 
 @cached(ttl_seconds=6 * 3600)
 def search_research_reports(symbol: str, limit: int = 20) -> dict[str, Any]:
     code = normalize_symbol(symbol)
+    limit = clamp_int(limit, default=20, minimum=1, maximum=100)
     aks = require_akshare()
     df = aks.stock_research_report_em(symbol=code)
     return {
@@ -483,45 +514,61 @@ def _history_stats(records: list[dict[str, Any]]) -> dict[str, Any]:
     return stats
 
 
+def _safe_section(name: str, fn: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    try:
+        result = fn()
+        if isinstance(result, dict):
+            return result
+        return {"ok": False, "section": name, "error": "InvalidResult", "message": "section did not return a dict"}
+    except Exception as exc:
+        return {"ok": False, "section": name, "error": type(exc).__name__, "message": str(exc)[:240]}
+
+
 @cached(ttl_seconds=3600)
 def get_company_snapshot(symbol: str, history_days: int = 60, announcement_limit: int = 5) -> dict[str, Any]:
     """Return an agent-friendly research pack for one A-share company."""
     code = normalize_symbol(symbol)
-    history_days = max(5, min(int(history_days), 250))
-    announcement_limit = max(1, min(int(announcement_limit), 20))
-    quote = get_realtime_quote(code)
-    profile = get_stock_profile(code)
-    history = get_daily_history(code, limit=history_days)
-    financial = get_financial_summary(code)
-    try:
-        business = get_business_composition(code, limit=10)
-    except Exception as exc:
-        business = {"ok": False, "error": type(exc).__name__, "message": str(exc)}
-    announcements = search_announcements(code, limit=max(1, min(int(announcement_limit), 20)))
+    history_days = clamp_int(history_days, default=60, minimum=5, maximum=250)
+    announcement_limit = clamp_int(announcement_limit, default=5, minimum=1, maximum=20)
+    quote = _safe_section("quote", lambda: get_realtime_quote(code))
+    profile = _safe_section("profile", lambda: get_stock_profile(code))
+    history = _safe_section("history", lambda: get_daily_history(code, limit=history_days))
+    financial = _safe_section("financial", lambda: get_financial_summary(code))
+    business = _safe_section("business", lambda: get_business_composition(code, limit=10))
+    announcements = _safe_section("announcements", lambda: search_announcements(code, limit=announcement_limit))
+    sections = {
+        "quote": quote,
+        "profile": profile,
+        "history": history,
+        "financial": financial,
+        "business": business,
+        "announcements": announcements,
+    }
+    warnings = [
+        "For research only; not investment advice.",
+        "Public endpoints can be delayed or unavailable; verify important figures against official filings.",
+        "Price history adjustment mode defaults to qfq when using get_daily_history directly.",
+    ]
+    for section_name, section in sections.items():
+        if section.get("ok") is False:
+            warnings.append(f"{section_name} unavailable: {section.get('error')}: {section.get('message')}")
+    q = quote.get("quote", {}) if quote.get("ok") else {}
+    p = profile.get("profile", {}) if profile.get("ok") else {}
     return {
-        "ok": True,
+        "ok": any(section.get("ok") is True for section in sections.values()),
+        "partial": any(section.get("ok") is False for section in sections.values()),
         "symbol": code,
-        "name": quote.get("quote", {}).get("name") or profile.get("profile", {}).get("股票简称"),
+        "name": q.get("name") or p.get("股票简称"),
         "market": market_prefix(code),
-        "sources": {
-            "quote": quote.get("source"),
-            "profile": profile.get("source"),
-            "history": history.get("source"),
-            "financial": financial.get("source"),
-            "business": business.get("source"),
-            "announcements": announcements.get("source"),
-        },
-        "quote": quote.get("quote"),
-        "profile": profile.get("profile"),
-        "price_history_stats": _history_stats(history.get("records", [])),
-        "financial_summary": financial.get("key_metrics"),
+        "sources": {name: section.get("source") for name, section in sections.items() if section.get("source")},
+        "quote": q or None,
+        "profile": p or None,
+        "price_history_stats": _history_stats(history.get("records", [])) if history.get("ok") else {},
+        "financial_summary": financial.get("key_metrics") if financial.get("ok") else {},
         "business_composition_sample": business.get("records", [])[:10] if business.get("ok") else [],
-        "recent_announcements": announcements.get("records", [])[:announcement_limit],
-        "warnings": [
-            "For research only; not investment advice.",
-            "Public endpoints can be delayed or unavailable; verify important figures against official filings.",
-            "Price history adjustment mode defaults to qfq when using get_daily_history directly.",
-        ],
+        "recent_announcements": announcements.get("records", [])[:announcement_limit] if announcements.get("ok") else [],
+        "section_status": {name: {k: section.get(k) for k in ("ok", "source", "error", "message") if k in section} for name, section in sections.items()},
+        "warnings": warnings,
     }
 
 
