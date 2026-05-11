@@ -14,7 +14,7 @@ from typing import Any, Callable
 from . import data
 
 SERVER_NAME = "a-share-mcp"
-SERVER_VERSION = "0.1.1"
+SERVER_VERSION = "0.2.0"
 
 
 def _tool_schema() -> list[dict[str, Any]]:
@@ -145,6 +145,22 @@ def _tool_schema() -> list[dict[str, Any]]:
             },
         },
         {
+            "name": "get_research_pack",
+            "description": "Build a generic structured A-share data pack with source ledger for company analysis.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string"},
+                    "history_days": {"type": "integer", "minimum": 20, "maximum": 500, "default": 120},
+                    "announcement_limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 10},
+                    "include_reports": {"type": "boolean", "default": False},
+                    "report_limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
+                },
+                "required": ["symbol"],
+                "additionalProperties": False,
+            },
+        },
+        {
             "name": "search_research_reports",
             "description": "Search public broker research reports from Eastmoney for background reading.",
             "inputSchema": {
@@ -172,6 +188,7 @@ def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
         "get_business_composition": data.get_business_composition,
         "search_announcements": data.search_announcements,
         "get_company_snapshot": data.get_company_snapshot,
+        "get_research_pack": data.get_research_pack,
         "search_research_reports": data.search_research_reports,
     }
     if name not in tools:

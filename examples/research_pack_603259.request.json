@@ -1,0 +1,10 @@
+{
+  "tool": "get_research_pack",
+  "arguments": {
+    "symbol": "603259",
+    "history_days": 120,
+    "announcement_limit": 10,
+    "include_reports": false
+  },
+  "note": "Run this through an MCP client. Output intentionally omitted because public market data changes over time."
+}

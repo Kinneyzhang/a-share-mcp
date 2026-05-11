@@ -64,7 +64,9 @@ def main() -> int:
         assert hist["ok"] is True and hist["count"] >= 1, hist
         snapshot = tool_call(proc, 6, "get_company_snapshot", {"symbol": "600519", "history_days": "bad", "announcement_limit": "bad"})
         assert snapshot["ok"] is True and snapshot["quote"] and snapshot["sources"], snapshot
-        print(json.dumps({"ok": True, "tools": len(names), "search_first": search["records"][0], "quote_name": quote["quote"].get("name"), "history_count": hist["count"], "snapshot_name": snapshot.get("name"), "snapshot_partial": snapshot.get("partial")}, ensure_ascii=False, indent=2))
+        pack = tool_call(proc, 7, "get_research_pack", {"symbol": "600519", "history_days": 20, "announcement_limit": 2, "include_reports": "false"})
+        assert pack["ok"] is True and pack["source_ledger"] and "price" in pack, pack
+        print(json.dumps({"ok": True, "tools": len(names), "search_first": search["records"][0], "quote_name": quote["quote"].get("name"), "history_count": hist["count"], "snapshot_name": snapshot.get("name"), "snapshot_partial": snapshot.get("partial"), "research_pack_name": pack.get("name")}, ensure_ascii=False, indent=2))
         return 0
     finally:
         proc.terminate()

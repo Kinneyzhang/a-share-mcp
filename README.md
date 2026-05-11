@@ -31,6 +31,7 @@ There are already broad financial-data MCP servers. This project intentionally s
 - `search_announcements` — CNINFO / Eastmoney announcement search.
 - `search_research_reports` — Public broker research search for background reading.
 - `get_company_snapshot` — One-call research pack: quote, profile, price stats, financial summary, business composition, and recent announcements.
+- `get_research_pack` — Structured company data pack with price records, financials, business composition, announcements, optional broker research, and a source ledger.
 
 ## Install
 
@@ -120,6 +121,15 @@ Build a company research pack:
 {
   "tool": "get_company_snapshot",
   "arguments": {"symbol": "603259", "history_days": 60, "announcement_limit": 5}
+}
+```
+
+Build a structured data pack with source ledger:
+
+```json
+{
+  "tool": "get_research_pack",
+  "arguments": {"symbol": "603259", "history_days": 120, "announcement_limit": 10, "include_reports": false}
 }
 ```
 

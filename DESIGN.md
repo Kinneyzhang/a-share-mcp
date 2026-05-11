@@ -57,6 +57,7 @@ small JSON cache + AkShare + Eastmoney public APIs + CNINFO through AkShare
 - Announcement search.
 - Research report search.
 - One-call company snapshot.
+- Structured research/data pack with source ledger.
 - Best-effort JSON cache.
 - MCP initialize/list/call smoke test.
 - Public README, license, package metadata, CI, examples.

@@ -2,6 +2,21 @@
 
 Use these prompts with an MCP-capable agent after configuring `a-share-mcp`.
 
+## Company data pack with source ledger
+
+```text
+Use A Share MCP to get a structured data pack for 603259 药明康德. Include price statistics, financial summary, business composition, announcements, and source ledger. Do not give buy/sell advice.
+```
+
+Expected tool:
+
+```json
+{
+  "tool": "get_research_pack",
+  "arguments": {"symbol": "603259", "history_days": 120, "announcement_limit": 10, "include_reports": false}
+}
+```
+
 ## Company research snapshot
 
 ```text

@@ -43,6 +43,7 @@ def _env_int(name: str, default: int) -> int:
 
 DEFAULT_CACHE_DIR = Path(os.getenv("A_SHARE_MCP_CACHE_DIR", Path.home() / ".cache" / "a-share-mcp"))
 DEFAULT_CACHE_TTL_SECONDS = _env_int("A_SHARE_MCP_CACHE_TTL_SECONDS", 300)
+CACHE_SCHEMA_VERSION = "2"
 
 
 def _today_yyyymmdd() -> str:
@@ -100,6 +101,19 @@ def clean_date(value: Any, default: str) -> str:
     return text if re.fullmatch(r"\d{8}", text) else default
 
 
+def parse_bool(value: Any, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "y", "on"}:
+        return True
+    if text in {"0", "false", "no", "n", "off"}:
+        return False
+    return default
+
+
 def _clean_scalar(value: Any) -> Any:
     if pd.isna(value):
         return None
@@ -131,7 +145,7 @@ def require_akshare() -> Any:
 
 
 def _cache_key(name: str, args: tuple[Any, ...], kwargs: dict[str, Any]) -> str:
-    raw = json.dumps({"name": name, "args": args, "kwargs": kwargs}, ensure_ascii=False, sort_keys=True, default=str)
+    raw = json.dumps({"cache_schema": CACHE_SCHEMA_VERSION, "name": name, "args": args, "kwargs": kwargs}, ensure_ascii=False, sort_keys=True, default=str)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
 
 
@@ -498,18 +512,41 @@ def _history_stats(records: list[dict[str, Any]]) -> dict[str, Any]:
     if not records:
         return {}
     closes = [float(r["close"]) for r in records]
+    highs = [float(r.get("high") or r["close"]) for r in records]
+    lows = [float(r.get("low") or r["close"]) for r in records]
+    volumes = [float(r.get("volume") or 0) for r in records]
+    turnovers = [float(r.get("turnover") or 0) for r in records]
     latest = records[-1]
+    high_value = max(highs)
+    low_value = min(lows)
+    high_idx = highs.index(high_value)
+    low_idx = lows.index(low_value)
+    max_drawdown = 0.0
+    peak = closes[0]
+    for close in closes:
+        peak = max(peak, close)
+        if peak:
+            max_drawdown = min(max_drawdown, close / peak - 1)
     stats = {
+        "period_start": records[0].get("date"),
+        "period_end": latest.get("date"),
         "latest_date": latest.get("date"),
         "latest_close": latest.get("close"),
-        "period_high": max(closes),
-        "period_low": min(closes),
+        "period_high": high_value,
+        "period_high_date": records[high_idx].get("date"),
+        "period_low": low_value,
+        "period_low_date": records[low_idx].get("date"),
         "return_pct": round((closes[-1] / closes[0] - 1) * 100, 4) if closes[0] else None,
+        "max_drawdown_pct": round(max_drawdown * 100, 4),
+        "avg_volume": round(sum(volumes) / len(volumes), 4) if volumes else None,
+        "avg_turnover": round(sum(turnovers) / len(turnovers), 4) if turnovers else None,
     }
-    for n in (5, 10, 20, 60):
+    for n in (5, 10, 20, 60, 120, 250):
         if len(closes) >= n:
             window = closes[-n:]
-            stats[f"ma{n}"] = round(sum(window) / n, 4)
+            ma = round(sum(window) / n, 4)
+            stats[f"ma{n}"] = ma
+            stats[f"latest_vs_ma{n}_pct"] = round((closes[-1] / ma - 1) * 100, 4) if ma else None
             stats[f"return_{n}d_pct"] = round((closes[-1] / closes[-n] - 1) * 100, 4) if closes[-n] else None
     return stats
 
@@ -522,6 +559,33 @@ def _safe_section(name: str, fn: Callable[[], dict[str, Any]]) -> dict[str, Any]
         return {"ok": False, "section": name, "error": "InvalidResult", "message": "section did not return a dict"}
     except Exception as exc:
         return {"ok": False, "section": name, "error": type(exc).__name__, "message": str(exc)[:240]}
+
+
+def _source_ledger(sections: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    ledger: list[dict[str, Any]] = []
+    for name, section in sections.items():
+        ok_value = section.get("ok")
+        entry = {
+            "section": name,
+            "ok": ok_value,
+            "status": "ok" if ok_value is True else "skipped" if ok_value is None else "error",
+            "source": section.get("source"),
+        }
+        if "start_date" in section:
+            entry["start_date"] = section.get("start_date")
+        if "end_date" in section:
+            entry["end_date"] = section.get("end_date")
+        if "count" in section:
+            entry["count"] = section.get("count")
+        if section.get("ok") is False:
+            entry["error"] = section.get("error")
+            entry["message"] = section.get("message")
+        ledger.append(entry)
+    return ledger
+
+
+def _section_status(sections: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {name: {k: section.get(k) for k in ("ok", "source", "error", "message") if k in section} for name, section in sections.items()}
 
 
 @cached(ttl_seconds=3600)
@@ -567,7 +631,94 @@ def get_company_snapshot(symbol: str, history_days: int = 60, announcement_limit
         "financial_summary": financial.get("key_metrics") if financial.get("ok") else {},
         "business_composition_sample": business.get("records", [])[:10] if business.get("ok") else [],
         "recent_announcements": announcements.get("records", [])[:announcement_limit] if announcements.get("ok") else [],
-        "section_status": {name: {k: section.get(k) for k in ("ok", "source", "error", "message") if k in section} for name, section in sections.items()},
+        "section_status": _section_status(sections),
+        "source_ledger": _source_ledger(sections),
+        "warnings": warnings,
+    }
+
+
+@cached(ttl_seconds=3600)
+def get_research_pack(symbol: str, history_days: int = 120, announcement_limit: int = 10, include_reports: bool = False, report_limit: int = 5) -> dict[str, Any]:
+    """Build a generic A-share data pack for agent-side company analysis.
+
+    This tool deliberately returns structured data only. It does not write
+    reports, create recommendations, or call external workflows.
+    """
+    code = normalize_symbol(symbol)
+    history_days = clamp_int(history_days, default=120, minimum=20, maximum=500)
+    announcement_limit = clamp_int(announcement_limit, default=10, minimum=1, maximum=50)
+    report_limit = clamp_int(report_limit, default=5, minimum=1, maximum=20)
+    include_reports = parse_bool(include_reports, default=False)
+    quote = _safe_section("quote", lambda: get_realtime_quote(code))
+    profile = _safe_section("profile", lambda: get_stock_profile(code))
+    history = _safe_section("history", lambda: get_daily_history(code, limit=history_days))
+    financial_raw = _safe_section("financial_indicators", lambda: get_financial_indicators(code, start_year="2023", limit=12))
+    financial_summary = _safe_section("financial_summary", lambda: get_financial_summary(code, start_year="2023"))
+    business = _safe_section("business_composition", lambda: get_business_composition(code, limit=20))
+    announcements = _safe_section("announcements", lambda: search_announcements(code, limit=announcement_limit))
+    reports = _safe_section("research_reports", lambda: search_research_reports(code, limit=report_limit)) if include_reports else {"ok": None, "source": None, "records": []}
+    sections = {
+        "quote": quote,
+        "profile": profile,
+        "history": history,
+        "financial_indicators": financial_raw,
+        "financial_summary": financial_summary,
+        "business_composition": business,
+        "announcements": announcements,
+        "research_reports": reports,
+    }
+    q = quote.get("quote", {}) if quote.get("ok") else {}
+    p = profile.get("profile", {}) if profile.get("ok") else {}
+    history_records = history.get("records", []) if history.get("ok") else []
+    warnings = [
+        "For research and education only; not investment advice.",
+        "Verify important figures against official filings before publication or decision-making.",
+        "Broker research, when included, is background material and not canonical evidence.",
+    ]
+    for section_name, section in sections.items():
+        if section.get("ok") is False:
+            warnings.append(f"{section_name} unavailable: {section.get('error')}: {section.get('message')}")
+    return {
+        "ok": any(section.get("ok") is True for section in sections.values()),
+        "partial": any(section.get("ok") is False for section in sections.values()),
+        "symbol": code,
+        "name": q.get("name") or p.get("股票简称"),
+        "market": market_prefix(code),
+        "generated_at": _dt.datetime.now().isoformat(timespec="seconds"),
+        "input": {
+            "history_days": history_days,
+            "announcement_limit": announcement_limit,
+            "include_reports": include_reports,
+            "report_limit": report_limit if include_reports else 0,
+        },
+        "company": {
+            "profile": p or None,
+            "quote": q or None,
+            "valuation": {
+                "total_market_cap": q.get("total_market_cap"),
+                "float_market_cap": q.get("float_market_cap"),
+                "pe_ttm": q.get("pe_ttm"),
+                "pb": q.get("pb"),
+            } if q else {},
+        },
+        "price": {
+            "stats": _history_stats(history_records),
+            "records": history_records,
+        },
+        "financials": {
+            "summary": financial_summary.get("key_metrics") if financial_summary.get("ok") else {},
+            "raw_records": financial_raw.get("records", []) if financial_raw.get("ok") else [],
+            "columns": financial_raw.get("columns", []) if financial_raw.get("ok") else [],
+        },
+        "business": {
+            "composition": business.get("records", []) if business.get("ok") else [],
+        },
+        "events": {
+            "announcements": announcements.get("records", []) if announcements.get("ok") else [],
+            "research_reports": reports.get("records", []) if reports.get("ok") else [],
+        },
+        "source_ledger": _source_ledger(sections),
+        "section_status": _section_status(sections),
         "warnings": warnings,
     }
 
