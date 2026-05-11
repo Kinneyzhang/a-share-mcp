@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "a-share-mcp"
-version = "0.5.0"
+version = "0.6.0"
 description = "Source-labeled, agent-friendly Chinese A-share data tools exposed as a local MCP server."
 readme = "README.md"
 requires-python = ">=3.10"

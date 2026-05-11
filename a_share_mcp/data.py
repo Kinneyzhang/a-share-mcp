@@ -1360,6 +1360,107 @@ def get_sector_components(sector_name: str, sector_type: str = "industry", limit
     except Exception as exc:
         return {"ok": True, "partial": True, "sector_type": sector_type, "sector_name": sector_name, "source": "sector_components_unavailable", "count": 0, "records": [], "warnings": [f"Sector components endpoint unavailable: {type(exc).__name__}: {str(exc)[:160]}"]}
 
+
+def _filter_event_records(records: list[dict[str, Any]], symbol: str, limit: int) -> list[dict[str, Any]]:
+    code = normalize_symbol(symbol)
+    out = []
+    for record in records:
+        joined = json.dumps(record, ensure_ascii=False)
+        if code in joined:
+            out.append(record)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _announcement_event(symbol: str, keyword: str, limit: int) -> dict[str, Any]:
+    return search_announcements(symbol, keyword=keyword, limit=limit)
+
+
+@cached(ttl_seconds=6 * 3600)
+def get_dividend_events(symbol: str, limit: int = 20) -> dict[str, Any]:
+    code = normalize_symbol(symbol)
+    limit = clamp_int(limit, default=20, minimum=1, maximum=100)
+    try:
+        aks = require_akshare()
+        df = aks.stock_dividend_cninfo(symbol=code)
+        return {"ok": True, "symbol": code, "event_type": "dividend", "source": "akshare.stock_dividend_cninfo/cninfo", "count": min(len(df), limit), "records": df_to_records(df, limit=limit)}
+    except Exception as exc:
+        ann = _announcement_event(code, "分红 派息 权益分派", limit)
+        ann["event_type"] = "dividend"
+        ann["source"] = f"announcement_keyword_fallback after {type(exc).__name__}"
+        return ann
+
+
+@cached(ttl_seconds=6 * 3600)
+def get_repurchase_events(symbol: str, limit: int = 20) -> dict[str, Any]:
+    code = normalize_symbol(symbol)
+    limit = clamp_int(limit, default=20, minimum=1, maximum=100)
+    try:
+        aks = require_akshare()
+        df = aks.stock_repurchase_em()
+        records = _filter_event_records(df_to_records(df, limit=6000), code, limit)
+        return {"ok": True, "symbol": code, "event_type": "repurchase", "source": "akshare.stock_repurchase_em/eastmoney", "count": len(records), "records": records}
+    except Exception as exc:
+        ann = _announcement_event(code, "回购", limit)
+        ann["event_type"] = "repurchase"
+        ann["source"] = f"announcement_keyword_fallback after {type(exc).__name__}"
+        return ann
+
+
+@cached(ttl_seconds=6 * 3600)
+def get_shareholder_change_events(symbol: str, limit: int = 20) -> dict[str, Any]:
+    code = normalize_symbol(symbol)
+    limit = clamp_int(limit, default=20, minimum=1, maximum=100)
+    try:
+        aks = require_akshare()
+        df = aks.stock_shareholder_change_ths(symbol=code)
+        return {"ok": True, "symbol": code, "event_type": "shareholder_change", "source": "akshare.stock_shareholder_change_ths", "count": min(len(df), limit), "records": df_to_records(df, limit=limit)}
+    except Exception as exc:
+        ann = _announcement_event(code, "增持 减持 股东 权益变动", limit)
+        ann["event_type"] = "shareholder_change"
+        ann["source"] = f"announcement_keyword_fallback after {type(exc).__name__}"
+        return ann
+
+
+@cached(ttl_seconds=6 * 3600)
+def get_financing_events(symbol: str, limit: int = 20) -> dict[str, Any]:
+    code = normalize_symbol(symbol)
+    limit = clamp_int(limit, default=20, minimum=1, maximum=100)
+    ann = _announcement_event(code, "增发 配股 可转债 融资 定向发行", limit)
+    ann["event_type"] = "financing"
+    ann["source"] = "announcement_keyword_search/cninfo"
+    return ann
+
+
+@cached(ttl_seconds=6 * 3600)
+def get_restricted_release_events(symbol: str, limit: int = 20) -> dict[str, Any]:
+    code = normalize_symbol(symbol)
+    limit = clamp_int(limit, default=20, minimum=1, maximum=100)
+    try:
+        aks = require_akshare()
+        df = aks.stock_restricted_release_detail_em(symbol=code)
+        return {"ok": True, "symbol": code, "event_type": "restricted_release", "source": "akshare.stock_restricted_release_detail_em/eastmoney", "count": min(len(df), limit), "records": df_to_records(df, limit=limit)}
+    except Exception as exc:
+        ann = _announcement_event(code, "限售 解禁", limit)
+        ann["event_type"] = "restricted_release"
+        ann["source"] = f"announcement_keyword_fallback after {type(exc).__name__}"
+        return ann
+
+
+@cached(ttl_seconds=6 * 3600)
+def get_financial_events_pack(symbol: str, limit: int = 10) -> dict[str, Any]:
+    code = normalize_symbol(symbol)
+    limit = clamp_int(limit, default=10, minimum=1, maximum=50)
+    sections = {
+        "dividends": _safe_section("dividends", lambda: get_dividend_events(code, limit=limit)),
+        "repurchases": _safe_section("repurchases", lambda: get_repurchase_events(code, limit=limit)),
+        "shareholder_changes": _safe_section("shareholder_changes", lambda: get_shareholder_change_events(code, limit=limit)),
+        "financing": _safe_section("financing", lambda: get_financing_events(code, limit=limit)),
+        "restricted_releases": _safe_section("restricted_releases", lambda: get_restricted_release_events(code, limit=limit)),
+    }
+    return {"ok": any(s.get("ok") is True for s in sections.values()), "partial": any(s.get("ok") is False for s in sections.values()), "symbol": code, "source_ledger": _source_ledger(sections), "events": sections, "warnings": ["For research and education only; not investment advice.", "Event records are source-dependent; verify material events against official filings."]}
+
 def data_healthcheck() -> dict[str, Any]:
     result: dict[str, Any] = {
         "ok": True,

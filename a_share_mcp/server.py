@@ -14,7 +14,7 @@ from typing import Any, Callable
 from . import data
 
 SERVER_NAME = "a-share-mcp"
-SERVER_VERSION = "0.5.0"
+SERVER_VERSION = "0.6.0"
 
 
 def _tool_schema() -> list[dict[str, Any]]:
@@ -221,6 +221,36 @@ def _tool_schema() -> list[dict[str, Any]]:
             "inputSchema": {"type": "object", "properties": {"sector_name": {"type": "string"}, "sector_type": {"type": "string", "enum": ["industry", "concept"], "default": "industry"}, "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50}}, "required": ["sector_name"], "additionalProperties": False},
         },
         {
+            "name": "get_financial_events_pack",
+            "description": "Get dividend, repurchase, shareholder-change, financing, and restricted-release events for a company.",
+            "inputSchema": {"type": "object", "properties": {"symbol": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 10}}, "required": ["symbol"], "additionalProperties": False},
+        },
+        {
+            "name": "get_dividend_events",
+            "description": "Get dividend/profit-distribution events for a company.",
+            "inputSchema": {"type": "object", "properties": {"symbol": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20}}, "required": ["symbol"], "additionalProperties": False},
+        },
+        {
+            "name": "get_repurchase_events",
+            "description": "Get share repurchase events for a company.",
+            "inputSchema": {"type": "object", "properties": {"symbol": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20}}, "required": ["symbol"], "additionalProperties": False},
+        },
+        {
+            "name": "get_shareholder_change_events",
+            "description": "Get shareholder increase/decrease or equity-change events.",
+            "inputSchema": {"type": "object", "properties": {"symbol": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20}}, "required": ["symbol"], "additionalProperties": False},
+        },
+        {
+            "name": "get_financing_events",
+            "description": "Get financing-related announcements such as placements, rights issues, convertible bonds.",
+            "inputSchema": {"type": "object", "properties": {"symbol": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20}}, "required": ["symbol"], "additionalProperties": False},
+        },
+        {
+            "name": "get_restricted_release_events",
+            "description": "Get restricted-share release/unlock events.",
+            "inputSchema": {"type": "object", "properties": {"symbol": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20}}, "required": ["symbol"], "additionalProperties": False},
+        },
+        {
             "name": "search_research_reports",
             "description": "Search public broker research reports from Eastmoney for background reading.",
             "inputSchema": {
@@ -255,6 +285,12 @@ def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
         "get_index_snapshot": data.get_index_snapshot,
         "get_sector_snapshot": data.get_sector_snapshot,
         "get_sector_components": data.get_sector_components,
+        "get_financial_events_pack": data.get_financial_events_pack,
+        "get_dividend_events": data.get_dividend_events,
+        "get_repurchase_events": data.get_repurchase_events,
+        "get_shareholder_change_events": data.get_shareholder_change_events,
+        "get_financing_events": data.get_financing_events,
+        "get_restricted_release_events": data.get_restricted_release_events,
         "search_research_reports": data.search_research_reports,
     }
     if name not in tools:

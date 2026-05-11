@@ -38,6 +38,8 @@ There are already broad financial-data MCP servers. This project intentionally s
 - `get_index_snapshot` — Mainland China index quote snapshot.
 - `get_sector_snapshot` — Industry/concept board snapshot list.
 - `get_sector_components` — Component stocks for an industry/concept board.
+- `get_financial_events_pack` — Dividend, repurchase, shareholder-change, financing, and restricted-release event pack.
+- `get_dividend_events` / `get_repurchase_events` / `get_shareholder_change_events` / `get_financing_events` / `get_restricted_release_events` — Event-specific tools.
 
 ## Install
 
