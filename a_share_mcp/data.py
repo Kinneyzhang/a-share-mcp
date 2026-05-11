@@ -337,40 +337,82 @@ def get_daily_history(symbol: str, start_date: str | None = None, end_date: str 
         "end": end,
         "lmt": str(limit),
     }
-    r = requests.get(url, params=params, headers=EASTMONEY_HEADERS, timeout=20)
-    r.raise_for_status()
-    payload = r.json()
-    data = payload.get("data") or {}
-    rows = []
-    for line in data.get("klines") or []:
-        parts = line.split(",")
-        if len(parts) >= 11:
+    source = "eastmoney.push2his.kline"
+    warnings: list[str] = []
+    try:
+        r = requests.get(url, params=params, headers=EASTMONEY_HEADERS, timeout=20)
+        r.raise_for_status()
+        payload = r.json()
+        data = payload.get("data") or {}
+        rows = []
+        for line in data.get("klines") or []:
+            parts = line.split(",")
+            if len(parts) >= 11:
+                rows.append(
+                    {
+                        "date": parts[0],
+                        "open": float(parts[1]),
+                        "close": float(parts[2]),
+                        "high": float(parts[3]),
+                        "low": float(parts[4]),
+                        "volume": float(parts[5]),
+                        "turnover": float(parts[6]),
+                        "amplitude_pct": float(parts[7]),
+                        "change_pct": float(parts[8]),
+                        "change": float(parts[9]),
+                        "turnover_rate_pct": float(parts[10]),
+                    }
+                )
+        name = data.get("name")
+    except requests.RequestException as exc:
+        warnings.append(f"Eastmoney kline request failed; fell back to AkShare stock_zh_a_daily: {type(exc).__name__}")
+        aks = require_akshare()
+        prefixed = f"{market_prefix(code).lower()}{code}"
+        ak_adjust = "" if adjust == "none" else adjust
+        df = aks.stock_zh_a_daily(symbol=prefixed, start_date=start, end_date=end, adjust=ak_adjust)
+        rows = []
+        previous_close: float | None = None
+        for record in df.tail(limit).to_dict("records"):
+            close = _clean_scalar(record.get("close"))
+            change = None
+            change_pct = None
+            if isinstance(close, (int, float)) and isinstance(previous_close, (int, float)) and previous_close:
+                change = close - previous_close
+                change_pct = change / previous_close * 100
+            turnover_rate = record.get("turnover")
+            if isinstance(turnover_rate, (int, float)):
+                turnover_rate = turnover_rate * 100
             rows.append(
                 {
-                    "date": parts[0],
-                    "open": float(parts[1]),
-                    "close": float(parts[2]),
-                    "high": float(parts[3]),
-                    "low": float(parts[4]),
-                    "volume": float(parts[5]),
-                    "turnover": float(parts[6]),
-                    "amplitude_pct": float(parts[7]),
-                    "change_pct": float(parts[8]),
-                    "change": float(parts[9]),
-                    "turnover_rate_pct": float(parts[10]),
+                    "date": str(_clean_scalar(record.get("date"))),
+                    "open": _clean_scalar(record.get("open")),
+                    "close": close,
+                    "high": _clean_scalar(record.get("high")),
+                    "low": _clean_scalar(record.get("low")),
+                    "volume": _clean_scalar(record.get("volume")),
+                    "turnover": _clean_scalar(record.get("amount")),
+                    "amplitude_pct": None,
+                    "change_pct": None if change_pct is None else round(change_pct, 4),
+                    "change": None if change is None else round(change, 4),
+                    "turnover_rate_pct": None if turnover_rate is None else round(turnover_rate, 4),
                 }
             )
+            if isinstance(close, (int, float)):
+                previous_close = close
+        name = None
+        source = "akshare.stock_zh_a_daily/sina"
     return {
         "ok": True,
         "symbol": code,
-        "name": data.get("name"),
+        "name": name,
         "market": market_prefix(code),
-        "source": "eastmoney.push2his.kline",
+        "source": source,
         "adjust": adjust,
         "start_date": start,
         "end_date": end,
         "count": len(rows),
         "records": rows,
+        "warnings": warnings,
     }
 
 
